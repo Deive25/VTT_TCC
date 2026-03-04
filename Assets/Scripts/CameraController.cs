@@ -1,214 +1,337 @@
 // ============================================================
-// CameraController.cs
-// Controla a câmera ortográfica 2D do VTT.
+// CameraController.cs  –  VTT Camera System v5
 //
-// Funcionalidades:
-//   - Pan: arrastar com o botão direito ou do meio do mouse
-//   - Zoom: scroll do mouse
-//   - Clamp: a câmera nunca ultrapassa as bordas do tabuleiro
-//   - Adapta o tamanho inicial à resolução do monitor
+// CONTROLES:
+//   Zoom → Scroll do mouse
+//   Pan  → Segurar botão DIREITO ou MEIO e arrastar
+//
+// ─── IMPORTANTE: CONFIGURAÇÃO DO INPUT SYSTEM ───────────────
+//
+//   Este script usa a API clássica (Input.GetAxis / Input.GetMouseButton).
+//   Verifique em:
+//     Edit → Project Settings → Player → Other Settings
+//       → Active Input Handling → "Input Manager (Old)" OU "Both"
+//
+//   Se estiver como "New Input System Package" APENAS, os controles
+//   não vão funcionar. Mude para "Both" e reinicie o Editor.
+//
+// ─── COMO VERIFICAR SE O SCRIPT ESTÁ FUNCIONANDO ────────────
+//
+//   Ative "debugMode = true" no Inspector e observe o Console.
+//   Você deve ver logs de Zoom e Pan quando usar o mouse.
+//   Se não aparecer nada, o script não está no objeto certo
+//   ou o Input System está errado.
+//
+// ─── SETUP DA CENA ──────────────────────────────────────────
+//
+//   1. Selecione a Main Camera na Hierarchy
+//   2. Adicione este script (Add Component → CameraController)
+//   3. Verifique: Camera → Projection = Orthographic
+//   4. A cena deve ter EventSystem (criado automaticamente com Canvas)
+//
 // ============================================================
-using UnityEngine;
 
-/// <summary>
-/// Câmera 2D com pan, zoom e limites baseados no tabuleiro ativo.
-/// </summary>
+using System.Collections;
+using UnityEngine;
+using UnityEngine.EventSystems;
+
 [RequireComponent(typeof(Camera))]
 public class CameraController : MonoBehaviour
 {
-    // --------------------------------------------------------
-    // Inspector
-    // --------------------------------------------------------
-    [Header("Pan")]
-    [Tooltip("Velocidade de pan ao arrastar (multiplicador).")]
-    [SerializeField] private float panSensitivity = 1f;
+    // ─── Inspector ───────────────────────────────────────────
 
     [Header("Zoom")]
-    [Tooltip("Velocidade de zoom ao usar o scroll.")]
-    [SerializeField] private float zoomSpeed = 0.15f;
+    [Tooltip("Sensibilidade do scroll do mouse. Padrão: 0.15")]
+    [SerializeField] private float zoomSensitivity = 0.15f;
 
-    [Tooltip("Tamanho ortográfico mínimo (mais zoom).")]
-    [SerializeField] private float minOrthoSize = 0.5f;
+    [Tooltip("Zoom-in máximo (menor valor = mais perto).")]
+    [SerializeField] private float minZoom = 0.5f;
 
-    [Tooltip("Tamanho ortográfico máximo (menos zoom).")]
-    [SerializeField] private float maxOrthoSize = 30f;
+    [Tooltip("Zoom-out máximo em unidades ortográficas. Aumente para permitir visão mais afastada.\n" +
+             "O board sempre fica centrado quando a câmera ultrapassa seus limites.")]
+    [SerializeField] private float maxZoom = 30f;
 
-    // --------------------------------------------------------
-    // Dependências
-    // --------------------------------------------------------
-    private Camera cam;
-    private MapController mapController;
-    private DefaultBoardRenderer defaultBoard;
+    [Header("Pan")]
+    [Tooltip("Sensibilidade do pan. 1 = movimento 1:1 com o cursor.")]
+    [SerializeField] private float panSensitivity = 1f;
 
-    // --------------------------------------------------------
-    // Estado de Pan
-    // --------------------------------------------------------
-    private Vector3 panOriginWorld; // Posição de mundo onde o drag começou
-    private bool isDragging = false;
+    [Header("Foco")]
+    [Tooltip("Margem ao enquadrar o board (0.05 = 5%).")]
+    [SerializeField] private float focusMargin = 0.05f;
 
-    // --------------------------------------------------------
-    // Unity Lifecycle
-    // --------------------------------------------------------
+    [Header("Debug")]
+    [Tooltip("Ative para ver logs de Zoom e Pan no Console.")]
+    [SerializeField] private bool debugMode = false;
+
+    // ─── Referências ─────────────────────────────────────────
+
+    private Camera _cam;
+    private MapController _mapCtrl;
+    private DefaultBoardRenderer _defaultBoard;
+
+    // ─── Estado do Pan ───────────────────────────────────────
+
+    private bool _panning;
+    private Vector3 _panAnchorWorld; // ponto de mundo ancorado ao cursor
+
+    // ============================================================
+    // Lifecycle
+    // ============================================================
 
     private void Awake()
     {
-        cam = GetComponent<Camera>();
-        mapController  = FindFirstObjectByType<MapController>();
-        defaultBoard   = FindFirstObjectByType<DefaultBoardRenderer>();
+        _cam = GetComponent<Camera>();
 
-        // Garante que a câmera é ortográfica
-        cam.orthographic = true;
-
-        // Inicializa o tamanho ortográfico com base na resolução do monitor
-        InitializeOrthoSize();
+        if (!_cam.orthographic)
+        {
+            Debug.LogWarning("[Camera] Câmera não está em modo Orthographic. Corrigindo...");
+            _cam.orthographic = true;
+        }
     }
+
+    private void Start()
+    {
+        _mapCtrl = FindAnyObjectByType<MapController>();
+        _defaultBoard = FindAnyObjectByType<DefaultBoardRenderer>();
+
+        if (_mapCtrl == null)
+            Debug.LogWarning("[Camera] MapController não encontrado na cena.");
+        if (_defaultBoard == null)
+            Debug.LogWarning("[Camera] DefaultBoardRenderer não encontrado na cena.");
+
+        StartCoroutine(FocusNextFrame());
+    }
+
+    private void OnEnable() => MapEvents.OnMapLoaded += OnMapLoaded;
+    private void OnDisable() => MapEvents.OnMapLoaded -= OnMapLoaded;
 
     private void Update()
     {
-        HandlePan();
         HandleZoom();
-        ClampCameraToActiveBounds();
+        HandlePan();
+
+        // Clamp SEMPRE no final do frame.
+        ClampToBoardBounds();
     }
 
-    // --------------------------------------------------------
-    // Inicialização
-    // --------------------------------------------------------
-
-    /// <summary>
-    /// Define o tamanho ortográfico inicial para que o tabuleiro padrão
-    /// apareça centralizado e totalmente visível na resolução atual.
-    /// </summary>
-    private void InitializeOrthoSize()
-    {
-        if (defaultBoard == null) return;
-
-        Vector2 boardSize = defaultBoard.GetBoardSize();
-
-        // Calcula tamanho para mostrar toda a altura do board com 5% de margem
-        float requiredByHeight = (boardSize.y / 2f) * 1.05f;
-        // Garante que a largura também caiba
-        float requiredByWidth  = (boardSize.x / 2f / cam.aspect) * 1.05f;
-
-        cam.orthographicSize = Mathf.Max(requiredByHeight, requiredByWidth);
-        transform.position   = new Vector3(0f, 0f, -10f);
-    }
-
-    // --------------------------------------------------------
-    // Pan
-    // --------------------------------------------------------
-
-    private void HandlePan()
-    {
-        // Botão do meio (2) ou direito (1)
-        bool panButtonDown = Input.GetMouseButtonDown(1) || Input.GetMouseButtonDown(2);
-        bool panButtonHeld = Input.GetMouseButton(1)    || Input.GetMouseButton(2);
-        bool panButtonUp   = Input.GetMouseButtonUp(1)  || Input.GetMouseButtonUp(2);
-
-        if (panButtonDown)
-        {
-            panOriginWorld = cam.ScreenToWorldPoint(Input.mousePosition);
-            isDragging     = true;
-        }
-
-        if (panButtonUp)
-        {
-            isDragging = false;
-        }
-
-        if (isDragging && panButtonHeld)
-        {
-            // Calcula o delta em espaço de mundo e move a câmera na direção oposta
-            Vector3 currentWorld = cam.ScreenToWorldPoint(Input.mousePosition);
-            Vector3 delta        = panOriginWorld - currentWorld;
-
-            transform.position += delta * panSensitivity;
-
-            // Atualiza a origem para o frame atual (evita acúmulo)
-            panOriginWorld = cam.ScreenToWorldPoint(Input.mousePosition);
-        }
-    }
-
-    // --------------------------------------------------------
-    // Zoom
-    // --------------------------------------------------------
+    // ============================================================
+    // ZOOM — scroll do mouse
+    // ============================================================
 
     private void HandleZoom()
     {
         float scroll = Input.GetAxis("Mouse ScrollWheel");
-        if (Mathf.Abs(scroll) < 0.001f) return;
 
-        // Zoom proporcional ao tamanho atual (sentimento constante)
-        float newSize = cam.orthographicSize * (1f - scroll * zoomSpeed * 10f);
-        cam.orthographicSize = Mathf.Clamp(newSize, minOrthoSize, maxOrthoSize);
+        if (Mathf.Abs(scroll) < 0.0001f) return;
+
+        // Ignora scroll quando o cursor está sobre a UI (painel do GM).
+        if (IsPointerOverUI()) return;
+
+        if (debugMode)
+            Debug.Log($"[Camera] Zoom scroll={scroll:F4}  orthoSize={_cam.orthographicSize:F3}");
+
+        // Captura o ponto de mundo sob o cursor ANTES de alterar o zoom.
+        Vector3 worldBefore = CursorToWorld();
+
+        // scroll > 0  = roda pra frente = zoom IN = orthographicSize diminui
+        // scroll < 0  = roda pra trás  = zoom OUT = orthographicSize aumenta
+        float newSize = _cam.orthographicSize * (1f - scroll * zoomSensitivity * 10f);
+        _cam.orthographicSize = Mathf.Clamp(newSize, minZoom, maxZoom);
+
+        // Move a câmera para que o ponto sob o cursor não se desloque.
+        Vector3 worldAfter = CursorToWorld();
+        transform.position += worldBefore - worldAfter;
+
+        if (debugMode)
+            Debug.Log($"[Camera] Novo orthoSize={_cam.orthographicSize:F3}  maxZoom={maxZoom:F3}  boardMax={ComputeBoardMaxZoom():F3}");
     }
 
-    // --------------------------------------------------------
-    // Clamp nos Bounds
-    // --------------------------------------------------------
+    // ============================================================
+    // PAN — botão direito (1) ou meio (2) pressionado + arrastar
+    // ============================================================
 
-    private void ClampCameraToActiveBounds()
+    private void HandlePan()
     {
-        Bounds activeBounds = GetActiveBounds();
+        bool justPressed = Input.GetMouseButtonDown(1) || Input.GetMouseButtonDown(2);
+        bool held = Input.GetMouseButton(1) || Input.GetMouseButton(2);
+        bool released = Input.GetMouseButtonUp(1) || Input.GetMouseButtonUp(2);
 
-        float camHalfH = cam.orthographicSize;
-        float camHalfW = cam.orthographicSize * cam.aspect;
+        // Inicia o pan: registra o ponto de mundo sob o cursor.
+        if (justPressed && !IsPointerOverUI())
+        {
+            _panAnchorWorld = CursorToWorld();
+            _panning = true;
 
-        // Calcula limites permitidos para o centro da câmera
-        float xMin = activeBounds.min.x + camHalfW;
-        float xMax = activeBounds.max.x - camHalfW;
-        float yMin = activeBounds.min.y + camHalfH;
-        float yMax = activeBounds.max.y - camHalfH;
+            if (debugMode)
+                Debug.Log($"[Camera] Pan INICIADO  anchor={_panAnchorWorld}");
+        }
 
-        float clampedX, clampedY;
+        if (released)
+        {
+            _panning = false;
 
-        // Se a câmera for mais larga que o tabuleiro, centraliza no eixo X
-        if (xMin > xMax)
-            clampedX = activeBounds.center.x;
-        else
-            clampedX = Mathf.Clamp(transform.position.x, xMin, xMax);
+            if (debugMode)
+                Debug.Log("[Camera] Pan FINALIZADO");
+        }
 
-        // Se a câmera for mais alta que o tabuleiro, centraliza no eixo Y
-        if (yMin > yMax)
-            clampedY = activeBounds.center.y;
-        else
-            clampedY = Mathf.Clamp(transform.position.y, yMin, yMax);
+        if (!_panning || !held) return;
 
-        transform.position = new Vector3(clampedX, clampedY, transform.position.z);
+        // Ponto de mundo atualmente sob o cursor.
+        Vector3 worldNow = CursorToWorld();
+
+        // Delta: mover a câmera para que worldNow "volte" ao anchor.
+        Vector3 delta = (_panAnchorWorld - worldNow) * panSensitivity;
+        transform.position += delta;
+
+        // Recalcula o anchor com a câmera já na nova posição.
+        // Sem isso, o próximo frame teria um delta errado (deriva).
+        _panAnchorWorld = CursorToWorld();
     }
+
+    // ============================================================
+    // CLAMP — câmera dentro dos limites do tabuleiro
+    // ============================================================
+
+    private void ClampToBoardBounds()
+    {
+        Bounds b = GetBoardBounds();
+
+        float halfH = _cam.orthographicSize;
+        float halfW = _cam.orthographicSize * _cam.aspect;
+
+        // Intervalo válido para o centro da câmera:
+        //   cx ∈ [b.min.x + halfW,  b.max.x - halfW]
+        //   cy ∈ [b.min.y + halfH,  b.max.y - halfH]
+        float xMin = b.min.x + halfW;
+        float xMax = b.max.x - halfW;
+        float yMin = b.min.y + halfH;
+        float yMax = b.max.y - halfH;
+
+        // Se viewport > board em algum eixo → centraliza naquele eixo.
+        float cx = (xMin < xMax) ? Mathf.Clamp(transform.position.x, xMin, xMax) : b.center.x;
+        float cy = (yMin < yMax) ? Mathf.Clamp(transform.position.y, yMin, yMax) : b.center.y;
+
+        transform.position = new Vector3(cx, cy, transform.position.z);
+    }
+
+    // ============================================================
+    // Helpers privados
+    // ============================================================
 
     /// <summary>
-    /// Retorna os bounds do elemento ativo: mapa (se carregado) ou board padrão.
+    /// Orthographic size em que a viewport passa a ser MAIOR que o board.
+    /// Acima desse valor o clamp centraliza automaticamente — o board fica
+    /// menor que a tela, mas ainda visível e sem revelar "infinito".
+    /// Usado apenas para FocusOnActiveBoard (não como hard-limit de zoom-out).
     /// </summary>
-    private Bounds GetActiveBounds()
+    private float ComputeBoardMaxZoom()
     {
-        if (mapController != null && mapController.IsMapLoaded)
-            return mapController.MapBounds;
-
-        if (defaultBoard != null)
-            return defaultBoard.GetBoardBounds();
-
-        // Fallback: bounds genérico
-        return new Bounds(Vector3.zero, new Vector3(20f, 12f, 1f));
+        Bounds b = GetBoardBounds();
+        float aspect = Mathf.Max(_cam.aspect, 0.001f);
+        float byH = b.extents.y;
+        float byW = b.extents.x / aspect;
+        return Mathf.Max(Mathf.Min(byH, byW), minZoom);
     }
 
-    // --------------------------------------------------------
-    // API Pública
-    // --------------------------------------------------------
+    /// <summary>
+    /// Converte a posição atual do cursor de tela para world-space no plano Z=0.
+    /// </summary>
+    private Vector3 CursorToWorld()
+    {
+        Vector3 pos = Input.mousePosition;
+        pos.z = -transform.position.z; // distância câmera → plano Z=0
+        return _cam.ScreenToWorldPoint(pos);
+    }
 
     /// <summary>
-    /// Enquadra a câmera para mostrar todo o tabuleiro ativo.
-    /// Chamado pelo botão "Reset Zoom" da UI.
+    /// Retorna true se o cursor estiver sobre algum elemento da UI.
+    /// Evita que zoom/pan disparem quando o usuário interage com o painel do GM.
+    /// </summary>
+    private bool IsPointerOverUI()
+    {
+        return EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
+    }
+
+    /// <summary>
+    /// Retorna os bounds do tabuleiro ativo em world-space.
+    /// SpriteRenderer.bounds já incorpora posição e escala do Transform,
+    /// portanto o cálculo funciona para qualquer escala de mapa.
+    /// </summary>
+    private Bounds GetBoardBounds()
+    {
+        // 1. Mapa importado
+        if (_mapCtrl != null && _mapCtrl.IsMapLoaded)
+        {
+            var sr = _mapCtrl.GetComponent<SpriteRenderer>();
+            if (sr != null && sr.sprite != null)
+                return sr.bounds;
+        }
+
+        // 2. Board padrão procedimental
+        if (_defaultBoard != null)
+            return _defaultBoard.GetBoardBounds();
+
+        // 3. Fallback de emergência
+        Debug.LogWarning("[Camera] Board não encontrado. Usando bounds 24×14.");
+        return new Bounds(Vector3.zero, new Vector3(24f, 14f, 1f));
+    }
+
+    // ============================================================
+    // API Pública
+    // ============================================================
+
+    /// <summary>Valor mínimo de orthographicSize (zoom-in máximo).</summary>
+    public float MinZoom => minZoom;
+
+    /// <summary>Valor máximo de orthographicSize (zoom-out máximo configurável).</summary>
+    public float MaxZoom => maxZoom;
+
+    /// <summary>orthographicSize atual da câmera.</summary>
+    public float CurrentZoom => _cam != null ? _cam.orthographicSize : 5f;
+
+    /// <summary>
+    /// Define o zoom (orthographicSize) diretamente, como se fosse o scroll do mouse.
+    /// Clampeia dentro dos limites e reposiciona se necessário.
+    /// Usado pelo slider de zoom da UI do GM.
+    /// </summary>
+    public void SetZoom(float orthoSize)
+    {
+        float clamped = Mathf.Clamp(orthoSize, minZoom, maxZoom);
+        _cam.orthographicSize = clamped;
+        ClampToBoardBounds();
+    }
+
+    /// <summary>
+    /// Enquadra o board inteiro na viewport com margem visual.
+    /// Chamado ao iniciar e ao carregar novo mapa.
+    /// Também acionado pelo botão "Reset Zoom" da UI do GM.
     /// </summary>
     public void FocusOnActiveBoard()
     {
-        Bounds bounds = GetActiveBounds();
+        Bounds b = GetBoardBounds();
+        transform.position = new Vector3(b.center.x, b.center.y, transform.position.z);
 
-        // Centraliza na origem do board
-        transform.position = new Vector3(bounds.center.x, bounds.center.y, transform.position.z);
+        float boardFit = ComputeBoardMaxZoom();
+        _cam.orthographicSize = Mathf.Clamp(boardFit * (1f - focusMargin), minZoom, maxZoom);
 
-        // Ajusta zoom para mostrar tudo
-        float requiredH = bounds.extents.y * 1.05f;
-        float requiredW = bounds.extents.x / cam.aspect * 1.05f;
-        cam.orthographicSize = Mathf.Clamp(Mathf.Max(requiredH, requiredW), minOrthoSize, maxOrthoSize);
+        ClampToBoardBounds();
+    }
+
+    /// <summary>Centraliza no board sem alterar o zoom atual.</summary>
+    public void CenterOnActiveBoard()
+    {
+        Bounds b = GetBoardBounds();
+        transform.position = new Vector3(b.center.x, b.center.y, transform.position.z);
+        ClampToBoardBounds();
+    }
+
+    // ─── Evento: novo mapa carregado ─────────────────────────
+
+    private void OnMapLoaded(Texture2D _) => StartCoroutine(FocusNextFrame());
+
+    private IEnumerator FocusNextFrame()
+    {
+        yield return null; // aguarda 1 frame para SpriteRenderer atualizar os bounds
+        FocusOnActiveBoard();
     }
 }
