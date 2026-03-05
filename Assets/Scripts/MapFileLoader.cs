@@ -137,6 +137,50 @@ public class MapFileLoader : MonoBehaviour
     /// Funciona com caminhos absolutos em qualquer plataforma.
     /// </summary>
     /// <param name="filePath">Caminho absoluto para a imagem (PNG ou JPG).</param>
+    /// 
+
+    // NOVO: Permite passar um callback específico em vez de disparar o evento global de mapa base
+    private System.Action<Texture2D> currentCallback;
+
+    public void OpenFilePickerWithCallback(System.Action<Texture2D> onSuccess)
+    {
+        if (isLoading) return;
+        currentCallback = onSuccess;
+
+#if UNITY_EDITOR
+        string path = UnityEditor.EditorUtility.OpenFilePanel("Selecionar Imagem", "", "png,jpg,jpeg");
+        if (!string.IsNullOrEmpty(path)) StartCoroutine(LoadTextureRoutine(path));
+#elif UNITY_STANDALONE_WIN
+        OpenFilePickerWindows(true); // Precisaria adaptar o Windows picker para usar callback
+#else
+        Debug.Log("[MapFileLoader] File picker não disponível.");
+#endif
+    }
+
+    private IEnumerator LoadTextureRoutine(string filePath)
+    {
+        isLoading = true;
+        string url = "file://" + filePath;
+        using (UnityWebRequest request = UnityWebRequestTexture.GetTexture(url))
+        {
+            yield return request.SendWebRequest();
+            if (request.result == UnityWebRequest.Result.Success)
+            {
+                Texture2D tex = DownloadHandlerTexture.GetContent(request);
+                if (currentCallback != null)
+                {
+                    currentCallback.Invoke(tex);
+                    currentCallback = null;
+                }
+                else
+                {
+                    MapEvents.FireMapLoaded(tex);
+                }
+            }
+        }
+        isLoading = false;
+    }
+
     public void LoadFromPath(string filePath)
     {
         if (isLoading) return;
@@ -196,4 +240,6 @@ public class MapFileLoader : MonoBehaviour
 
         isLoading = false;
     }
+
+
 }

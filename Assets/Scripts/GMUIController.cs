@@ -29,6 +29,7 @@ public class GMUIController : MonoBehaviour
     private TMP_Text brushSizeText;
     private Button fogPaintBtn;
     private Button fogEraseBtn;
+    private RectTransform layersContainer;
 
     // --- Dimensoes -------------------------------------------
     private const float W_RIGHT = 276f;
@@ -60,8 +61,17 @@ public class GMUIController : MonoBehaviour
         if (fogController != null) fogController.OnBrushChanged += RefreshBrushLabel;
     }
 
-    private void OnEnable() { MapEvents.OnMapInfoUpdated += OnMapInfo; }
-    private void OnDisable() { MapEvents.OnMapInfoUpdated -= OnMapInfo; }
+    private void OnEnable()
+    {
+        MapEvents.OnMapInfoUpdated += OnMapInfo;
+        MapEvents.OnLayersChanged += RefreshLayersList; // Escuta alterações nas camadas
+    }
+
+    private void OnDisable()
+    {
+        MapEvents.OnMapInfoUpdated -= OnMapInfo;
+        MapEvents.OnLayersChanged -= RefreshLayersList;
+    }
 
     private void Update()
     {
@@ -108,7 +118,6 @@ public class GMUIController : MonoBehaviour
 
     private void BuildLeftPanel(Transform cvTransform)
     {
-        // Alterado de anchorY 0f para 1f
         RectTransform p = VTTLayout.Panel("GM_Left", cvTransform,
             new Vector2(0f, 1f), new Vector2(0f, 1f),
             new Vector2(0f, 1f), W_LEFT, VTTLayout.C_LEFT_BG);
@@ -116,13 +125,86 @@ public class GMUIController : MonoBehaviour
         float y = 0f;
         y = DrawPanelHeader(p, y, "RECURSOS");
         y = DrawSecHeader(p, y, "CAMADAS");
-        y = DrawPlaceholder(p, y, "Camadas de terreno\n(em breve)");
+
+        // Botão de Adicionar Camada
+        VTTLayout.BtnFull(p, y, BH, -PAD * 2f,
+            "+ NOVA CAMADA", VTTLayout.C_BTN_PRI, VTTLayout.C_BDR_ACC, VTTLayout.C_TEXT, VTTLayout.F_BTN)
+            .onClick.AddListener(DoAddLayer);
+        y -= BH + GAP;
+
+        // Container dinâmico para os itens da lista
+        layersContainer = VTTLayout.Panel("LayersContainer", p,
+            new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, 1f), W_LEFT, VTTLayout.C_LEFT_BG);
+        layersContainer.anchoredPosition = new Vector2(0f, y);
+
+        y -= 200f; // Espaço inicial reservado (será reajustado depois dinamicamente)
+
         y = DrawSecHeader(p, y, "TOKENS");
         y = DrawPlaceholder(p, y, "Tokens de personagens\n(em breve)");
         y = DrawSecHeader(p, y, "RASTREAMENTO");
         y = DrawPlaceholder(p, y, "Rastreamento\n(em breve)");
 
         p.sizeDelta = new Vector2(W_LEFT, Mathf.Abs(y) + PAD * 2f);
+    }
+
+    // --- Lógica de UI das Camadas ---
+
+
+    private void DoAddLayer()
+    {
+        if (MapFileLoader.Instance != null)
+        {
+            MapFileLoader.Instance.OpenFilePickerWithCallback((tex) =>
+            {
+                if (LayerManager.Instance != null) LayerManager.Instance.AddLayer(tex);
+            });
+        }
+    }
+
+    private void RefreshLayersList()
+    {
+        if (layersContainer == null || LayerManager.Instance == null) return;
+
+        // Limpa lista atual
+        foreach (Transform child in layersContainer) Destroy(child.gameObject);
+
+        float ly = 0f;
+        var layers = LayerManager.Instance.Layers;
+
+        foreach (var layer in layers)
+        {
+            bool isActive = (layer.id == LayerManager.Instance.ActiveLayerId);
+            Color bgColor = isActive ? VTTLayout.C_ACCENT : VTTLayout.C_SEC_BG;
+
+            // Fundo do item
+            RectTransform itemRT = VTTLayout.Box("LayerItem", layersContainer, PAD, ly, -PAD * 2f, 30f, bgColor, new Vector2(0f, 1f), new Vector2(1f, 1f));
+
+            // Botão de Selecionar (ocupa a maior parte do item)
+            Button selectBtn = VTTLayout.BtnFixed(itemRT, 0f, 0f, W_LEFT - 100f, 30f, layer.name, Color.clear, Color.clear, VTTLayout.C_TEXT, VTTLayout.F_SMALL);
+            selectBtn.onClick.AddListener(() => LayerManager.Instance.SetActiveLayer(layer.id));
+
+            // Botão Visibilidade
+            string visLabel = layer.isVisible ? "O" : "-";
+            VTTLayout.BtnFixed(itemRT, W_LEFT - 95f, -4f, 22f, 22f, visLabel, VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, 10f)
+                .onClick.AddListener(() => LayerManager.Instance.ToggleVisibility(layer.id));
+
+            // Botão Subir
+            VTTLayout.BtnFixed(itemRT, W_LEFT - 70f, -4f, 18f, 22f, "^", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, 10f)
+                .onClick.AddListener(() => LayerManager.Instance.MoveLayerUp(layer.id));
+
+            // Botão Descer
+            VTTLayout.BtnFixed(itemRT, W_LEFT - 48f, -4f, 18f, 22f, "v", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, 10f)
+                .onClick.AddListener(() => LayerManager.Instance.MoveLayerDown(layer.id));
+
+            // Botão Deletar
+            VTTLayout.BtnFixed(itemRT, W_LEFT - 26f, -4f, 18f, 22f, "X", VTTLayout.C_BTN_CLOSE, VTTLayout.C_BDR_CLOSE, VTTLayout.C_TEXT, 10f)
+                .onClick.AddListener(() => LayerManager.Instance.RemoveLayer(layer.id));
+
+            ly -= 30f + 4f; // altura + gap
+        }
+
+        // Ajusta a altura do container dinâmico
+        layersContainer.sizeDelta = new Vector2(0f, Mathf.Abs(ly));
     }
 
     // =========================================================
