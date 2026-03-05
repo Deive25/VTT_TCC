@@ -13,7 +13,7 @@
 // SISTEMA DE COORDENADAS:
 //   anchorMin=(0,1) anchorMax=(x,1) pivot=(0,1)
 //   anchoredPosition.y = negativo (desce a partir do topo)
-//   sizeDelta.y = negativo (altura do elemento)
+//   sizeDelta.y = POSITIVO (altura do elemento)
 // ============================================================
 
 using UnityEngine;
@@ -25,10 +25,10 @@ public static class VTTLayout
     // --- Grid ------------------------------------------------
     public const float PAD = 12f;    // padding lateral interno
     public const float GAP = 6f;     // espaco entre elementos
-    public const float SGAP = 14f;    // espaco entre secoes
-    public const float BTN_H = 34f;    // altura padrao de botao
-    public const float HDR_H = 28f;    // altura de section header
-    public const float PHDR_H = 42f;    // altura de panel header
+    public const float SGAP = 14f;   // espaco entre secoes
+    public const float BTN_H = 34f;  // altura padrao de botao
+    public const float HDR_H = 28f;  // altura de section header
+    public const float PHDR_H = 42f; // altura de panel header
 
     // --- Tamanhos de fonte -----------------------------------
     public const float F_PANEL = 12f;
@@ -46,7 +46,6 @@ public static class VTTLayout
     public static readonly Color C_ACCENT = RGB(0.24f, 0.42f, 0.65f);
     public static readonly Color C_ACCENT_LT = RGB(0.35f, 0.55f, 0.80f);
 
-    // botoes
     public static readonly Color C_BTN_PRI = RGB(0.18f, 0.34f, 0.56f);
     public static readonly Color C_BTN_SEC = RGB(0.14f, 0.17f, 0.23f);
     public static readonly Color C_BTN_PAINT = RGB(0.12f, 0.22f, 0.36f);
@@ -57,7 +56,6 @@ public static class VTTLayout
     public static readonly Color C_BTN_CLEAR = RGB(0.18f, 0.18f, 0.24f);
     public static readonly Color C_BTN_ROLL = RGB(0.22f, 0.38f, 0.62f);
 
-    // bordas (levemente mais claras que o botao correspondente)
     public static readonly Color C_BDR_DEFAULT = RGB(0.26f, 0.32f, 0.44f);
     public static readonly Color C_BDR_ACC = RGB(0.34f, 0.54f, 0.80f);
     public static readonly Color C_BDR_PAINT = RGB(0.20f, 0.40f, 0.65f);
@@ -66,7 +64,6 @@ public static class VTTLayout
     public static readonly Color C_BDR_CLOSE = RGB(0.65f, 0.22f, 0.22f);
     public static readonly Color C_BDR_ROLL = RGB(0.40f, 0.60f, 0.90f);
 
-    // texto
     public static readonly Color C_TEXT = RGB(0.84f, 0.88f, 0.96f);
     public static readonly Color C_TEXT_DIM = RGB(0.42f, 0.48f, 0.60f);
     public static readonly Color C_TEXT_HDR = RGB(0.68f, 0.76f, 0.90f);
@@ -76,38 +73,21 @@ public static class VTTLayout
     public static readonly Color C_TEXT_GOLD = RGB(0.92f, 0.78f, 0.28f);
     public static readonly Color C_TEXT_RED = RGB(0.82f, 0.26f, 0.22f);
 
-    // dados (por indice em DICE_TYPES)
     public static readonly Color[] C_DICE = {
-        RGB(0.20f, 0.60f, 0.55f),   // D4  teal
-        RGB(0.24f, 0.50f, 0.82f),   // D6  azul
-        RGB(0.55f, 0.28f, 0.75f),   // D8  roxo
-        RGB(0.20f, 0.42f, 0.70f),   // D10 azul escuro
-        RGB(0.40f, 0.20f, 0.60f),   // D12 violeta
-        RGB(0.80f, 0.62f, 0.10f),   // D20 ouro
+        RGB(0.20f, 0.60f, 0.55f),
+        RGB(0.24f, 0.50f, 0.82f),
+        RGB(0.55f, 0.28f, 0.75f),
+        RGB(0.20f, 0.42f, 0.70f),
+        RGB(0.40f, 0.20f, 0.60f),
+        RGB(0.80f, 0.62f, 0.10f),
     };
 
-    // --- Utilitarios de cor ----------------------------------
+    public static Color RGB(float r, float g, float b, float a = 1f) => new Color(r, g, b, a);
+    public static Color Highlight(Color c) => Color.Lerp(c, Color.white, 0.22f);
+    public static Color Pressed(Color c) => Color.Lerp(c, Color.black, 0.28f);
+    public static Color Selected(Color c) => Color.Lerp(c, Color.white, 0.10f);
+    public static Color Disabled(Color c) => new Color(c.r * 0.5f, c.g * 0.5f, c.b * 0.5f, 0.6f);
 
-    public static Color RGB(float r, float g, float b, float a = 1f)
-    {
-        return new Color(r, g, b, a);
-    }
-
-    public static Color Highlight(Color c) { return Color.Lerp(c, Color.white, 0.22f); }
-    public static Color Pressed(Color c) { return Color.Lerp(c, Color.black, 0.28f); }
-    public static Color Selected(Color c) { return Color.Lerp(c, Color.white, 0.10f); }
-    public static Color Disabled(Color c) { return new Color(c.r * 0.5f, c.g * 0.5f, c.b * 0.5f, 0.6f); }
-
-    // =========================================================
-    // Fabrica de widgets
-    // =========================================================
-
-    // --- Painel raiz -----------------------------------------
-
-    /// <summary>
-    /// Painel que ocupa toda a altura do Canvas (anchorMin.y=0, anchorMax.y=1).
-    /// Fica colado na borda indicada por anchorMin.x / anchorMax.x.
-    /// </summary>
     public static RectTransform Panel(string name, Transform parent,
         Vector2 anchorMin, Vector2 anchorMax, Vector2 pivot,
         float width, Color bgColor)
@@ -124,16 +104,11 @@ public static class VTTLayout
         return rt;
     }
 
-    // Sobrecarga com cor padrao
     public static RectTransform Panel(string name, Transform parent,
         Vector2 anchorMin, Vector2 anchorMax, Vector2 pivot, float width)
     {
         return Panel(name, parent, anchorMin, anchorMax, pivot, width, C_BG);
     }
-
-    // --- Caixa de fundo decorativa ---------------------------
-    // Ancora de topo-esquerdo a topo-direito, pivo topo-esquerdo.
-    // x=0 e dw=0 significa "igual a largura do parent".
 
     public static RectTransform Box(string name, RectTransform parent,
         float x, float y, float dw, float dh, Color color)
@@ -157,8 +132,6 @@ public static class VTTLayout
         return rt;
     }
 
-    // --- Barra decorativa de acento lateral ------------------
-
     public static void AccentBar(RectTransform parent, float width, Color color)
     {
         GameObject go = New("AccBar", parent);
@@ -170,8 +143,6 @@ public static class VTTLayout
         rt.sizeDelta = new Vector2(width, 0f);
         Deco(go, color);
     }
-
-    // --- Label full-width ancorado no topo ------------------
 
     public static TMP_Text Label(RectTransform parent,
         float y, float height, float fontSize,
@@ -185,11 +156,10 @@ public static class VTTLayout
         rt.anchorMax = new Vector2(1f, 1f);
         rt.pivot = new Vector2(0f, 1f);
         rt.anchoredPosition = new Vector2(padLeft, y);
-        rt.sizeDelta = new Vector2(-(padLeft + padRight), -height);
+        // Altura precisa ser positiva
+        rt.sizeDelta = new Vector2(-(padLeft + padRight), height);
         return TxtNode(go, fontSize, color, style, align);
     }
-
-    // --- Label de posicao e largura fixas --------------------
 
     public static TMP_Text LabelFixed(RectTransform parent,
         float x, float y, float width, float height,
@@ -202,11 +172,10 @@ public static class VTTLayout
         rt.anchorMax = new Vector2(0f, 1f);
         rt.pivot = new Vector2(0f, 1f);
         rt.anchoredPosition = new Vector2(x, y);
-        rt.sizeDelta = new Vector2(width, -height);
+        // Altura positiva
+        rt.sizeDelta = new Vector2(width, height);
         return TxtNode(go, fontSize, color, style, align);
     }
-
-    // --- Label esticado preenchendo o parent -----------------
 
     public static TMP_Text LabelStretch(string name, RectTransform parent,
         Vector2 offsetMin, Vector2 offsetMax,
@@ -222,10 +191,6 @@ public static class VTTLayout
         return TxtNode(go, fontSize, color, style, align);
     }
 
-    // --- Botao full-width ------------------------------------
-    // dw = delta de largura em relacao ao parent
-    // (ex: -PAD*2 para inset bilateral de PAD em cada lado)
-
     public static Button BtnFull(RectTransform parent,
         float y, float height, float dw,
         string label, Color bg, Color border,
@@ -237,13 +202,12 @@ public static class VTTLayout
         wrt.anchorMax = new Vector2(1f, 1f);
         wrt.pivot = new Vector2(0.5f, 1f);
         wrt.anchoredPosition = new Vector2(0f, y);
-        wrt.sizeDelta = new Vector2(dw, -height);
+        // Altura positiva
+        wrt.sizeDelta = new Vector2(dw, height);
         Deco(wrap, border);
 
         return BtnCore(wrap.transform, label, bg, textColor, fontSize, bold);
     }
-
-    // --- Botao de posicao e tamanho fixos --------------------
 
     public static Button BtnFixed(RectTransform parent,
         float x, float y, float width, float height,
@@ -256,13 +220,13 @@ public static class VTTLayout
         wrt.anchorMax = new Vector2(0f, 1f);
         wrt.pivot = new Vector2(0f, 1f);
         wrt.anchoredPosition = new Vector2(x, y);
-        wrt.sizeDelta = new Vector2(width, -height);
+        // Altura positiva
+        wrt.sizeDelta = new Vector2(width, height);
         Deco(wrap, border);
 
         return BtnCore(wrap.transform, label, bg, textColor, fontSize, bold);
     }
 
-    // Nucleo interno do botao (insetado 1px dentro do wrapper de borda)
     private static Button BtnCore(Transform parent,
         string label, Color bg, Color textColor, float fontSize, bool bold)
     {
@@ -276,7 +240,7 @@ public static class VTTLayout
 
         Image img = go.AddComponent<Image>();
         img.color = bg;
-        img.raycastTarget = true;   // targetGraphic do botao - UNICO true
+        img.raycastTarget = true;
 
         Button btn = go.AddComponent<Button>();
         btn.targetGraphic = img;
@@ -291,7 +255,6 @@ public static class VTTLayout
         cb.colorMultiplier = 1f;
         btn.colors = cb;
 
-        // Label filho (nao captura raycasts)
         GameObject lgo = New("Lbl", go.transform);
         RectTransform lrt = lgo.AddComponent<RectTransform>();
         lrt.anchorMin = Vector2.zero;
@@ -303,8 +266,6 @@ public static class VTTLayout
 
         return btn;
     }
-
-    // --- Atualiza cor de um botao existente ------------------
 
     public static void SetBtnColor(Button btn, Color color)
     {
@@ -318,22 +279,19 @@ public static class VTTLayout
         btn.colors = cb;
     }
 
-    // --- Slider ----------------------------------------------
-
     public static Slider MakeSlider(RectTransform parent,
         float y, float height, float min, float max, float val)
     {
-        // Wrapper borda
         GameObject wrap = New("SliderWrap", parent);
         RectTransform wrt = wrap.AddComponent<RectTransform>();
         wrt.anchorMin = new Vector2(0f, 1f);
         wrt.anchorMax = new Vector2(1f, 1f);
         wrt.pivot = new Vector2(0.5f, 1f);
         wrt.anchoredPosition = new Vector2(0f, y);
-        wrt.sizeDelta = new Vector2(-PAD * 2f, -height);
+        // Altura positiva
+        wrt.sizeDelta = new Vector2(-PAD * 2f, height);
         Deco(wrap, C_BDR_DEFAULT);
 
-        // Container insetado
         GameObject go = New("Slider", wrap.transform);
         RectTransform rt = go.AddComponent<RectTransform>();
         rt.anchorMin = Vector2.zero;
@@ -349,7 +307,6 @@ public static class VTTLayout
         s.value = val;
         s.direction = Slider.Direction.LeftToRight;
 
-        // Track
         {
             GameObject t = New("Track", go.transform);
             RectTransform trt = t.AddComponent<RectTransform>();
@@ -359,7 +316,6 @@ public static class VTTLayout
             Deco(t, RGB(0.07f, 0.08f, 0.11f));
         }
 
-        // Fill
         RectTransform fillRT;
         {
             GameObject fa = New("FillArea", go.transform);
@@ -380,7 +336,6 @@ public static class VTTLayout
             Deco(fill, C_ACCENT);
         }
 
-        // Handle
         RectTransform handleRT;
         {
             GameObject ha = New("HandleArea", go.transform);
@@ -397,7 +352,7 @@ public static class VTTLayout
             handleRT.pivot = new Vector2(0.5f, 0.5f);
             Image hImg = handle.AddComponent<Image>();
             hImg.color = RGB(0.74f, 0.82f, 0.93f);
-            hImg.raycastTarget = true;   // handle e interativo
+            hImg.raycastTarget = true;
         }
 
         s.fillRect = fillRT;
@@ -407,10 +362,6 @@ public static class VTTLayout
         return s;
     }
 
-    // =========================================================
-    // Primitivas internas
-    // =========================================================
-
     public static GameObject New(string name, Transform parent)
     {
         var go = new GameObject(name);
@@ -418,7 +369,6 @@ public static class VTTLayout
         return go;
     }
 
-    /// <summary>Image decorativa - raycastTarget sempre false.</summary>
     public static void Deco(GameObject go, Color color)
     {
         Image img = go.AddComponent<Image>();
@@ -431,7 +381,6 @@ public static class VTTLayout
         Deco(rt.gameObject, color);
     }
 
-    /// <summary>TMP_Text - raycastTarget sempre false.</summary>
     private static TMP_Text TxtNode(GameObject go,
         float fontSize, Color color, FontStyles style, TextAlignmentOptions align)
     {
@@ -440,7 +389,7 @@ public static class VTTLayout
         t.color = color;
         t.fontStyle = style;
         t.alignment = align;
-        t.raycastTarget = false;   // texto nao captura raycast nunca
+        t.raycastTarget = false;
         return t;
     }
 }

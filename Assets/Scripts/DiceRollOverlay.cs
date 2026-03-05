@@ -150,7 +150,8 @@ public class DiceRollOverlay : MonoBehaviour
         hrtBG.anchorMax = new Vector2(1f, 1f);
         hrtBG.pivot = new Vector2(0.5f, 1f);
         hrtBG.anchoredPosition = new Vector2(0f, y);
-        hrtBG.sizeDelta = new Vector2(0f, -h);
+        // Altura Positiva
+        hrtBG.sizeDelta = new Vector2(0f, h);
         MakeDeco(hdrBg, COL_HDR);
 
         // Barra de acento
@@ -170,7 +171,8 @@ public class DiceRollOverlay : MonoBehaviour
         titleRT.anchorMax = new Vector2(1f, 1f);
         titleRT.pivot = new Vector2(0f, 1f);
         titleRT.anchoredPosition = new Vector2(pad + 5f, y);
-        titleRT.sizeDelta = new Vector2(-(pad * 2f + closeSz + gap), -h);
+        // Altura Positiva
+        titleRT.sizeDelta = new Vector2(-(pad * 2f + closeSz + gap), h);
         title.text = "ROLAGEM DE DADOS";
         title.fontSize = 12f;
         title.fontStyle = FontStyles.Bold;
@@ -201,7 +203,8 @@ public class DiceRollOverlay : MonoBehaviour
         bgRT.anchorMax = new Vector2(1f, 1f);
         bgRT.pivot = new Vector2(0.5f, 1f);
         bgRT.anchoredPosition = new Vector2(0f, y);
-        bgRT.sizeDelta = new Vector2(0f, -h);
+        // Altura Positiva
+        bgRT.sizeDelta = new Vector2(0f, h);
         MakeDeco(bg, COL_SEC_BG);
 
         GameObject acc = MakeGO("Acc", bgRT);
@@ -219,7 +222,8 @@ public class DiceRollOverlay : MonoBehaviour
         tRT.anchorMax = new Vector2(1f, 1f);
         tRT.pivot = new Vector2(0f, 1f);
         tRT.anchoredPosition = new Vector2(8f, y);
-        tRT.sizeDelta = new Vector2(-8f, -h);
+        // Altura Positiva
+        tRT.sizeDelta = new Vector2(-8f, h);
         t.text = label;
         t.fontSize = 9f;
         t.fontStyle = FontStyles.Bold;
@@ -273,7 +277,8 @@ public class DiceRollOverlay : MonoBehaviour
         bgRT.anchorMax = new Vector2(0f, 1f);
         bgRT.pivot = new Vector2(0f, 1f);
         bgRT.anchoredPosition = new Vector2(cellX, cellY);
-        bgRT.sizeDelta = new Vector2(cellW, -cellH);
+        // Altura Positiva
+        bgRT.sizeDelta = new Vector2(cellW, cellH);
         MakeDeco(bg, COL_SEC_BG);
 
         // Barra de acento colorida na esquerda (filho de bgRT)
@@ -319,7 +324,8 @@ public class DiceRollOverlay : MonoBehaviour
         cntRT.anchorMax = new Vector2(1f, 0.5f);
         cntRT.pivot = new Vector2(1f, 0.5f);
         cntRT.anchoredPosition = new Vector2(-(4f + btnSz + 2f), 0f);
-        cntRT.sizeDelta = new Vector2(cntW, -btnH);
+        // Altura Positiva
+        cntRT.sizeDelta = new Vector2(cntW, btnH);
         cntLabel.text = "0";
         cntLabel.fontSize = 12f;
         cntLabel.fontStyle = FontStyles.Bold;
@@ -374,7 +380,8 @@ public class DiceRollOverlay : MonoBehaviour
         boxRT.anchorMax = new Vector2(1f, 1f);
         boxRT.pivot = new Vector2(0f, 1f);
         boxRT.anchoredPosition = new Vector2(0f, y);
-        boxRT.sizeDelta = new Vector2(0f, -boxH);
+        // Altura Positiva
+        boxRT.sizeDelta = new Vector2(0f, boxH);
         MakeDeco(box, COL_CONTENT);
 
         // Barra de acento
@@ -404,7 +411,8 @@ public class DiceRollOverlay : MonoBehaviour
         totalRT.anchorMax = new Vector2(1f, 1f);
         totalRT.pivot = new Vector2(0.5f, 1f);
         totalRT.anchoredPosition = new Vector2(0f, y);
-        totalRT.sizeDelta = new Vector2(0f, -22f);
+        // Altura Positiva
+        totalRT.sizeDelta = new Vector2(0f, 22f);
         _resultTotal.fontSize = 14f;
         _resultTotal.fontStyle = FontStyles.Bold;
         _resultTotal.color = COL_GOLD;
@@ -428,7 +436,8 @@ public class DiceRollOverlay : MonoBehaviour
         boxRT.anchorMax = new Vector2(1f, 1f);
         boxRT.pivot = new Vector2(0f, 1f);
         boxRT.anchoredPosition = new Vector2(0f, y);
-        boxRT.sizeDelta = new Vector2(0f, -boxH);
+        // Altura Positiva
+        boxRT.sizeDelta = new Vector2(0f, boxH);
         MakeDeco(box, COL_CONTENT);
 
         GameObject acc = MakeGO("Acc", boxRT);

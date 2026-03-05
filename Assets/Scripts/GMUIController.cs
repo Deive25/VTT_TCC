@@ -84,8 +84,9 @@ public class GMUIController : MonoBehaviour
 
     private void BuildRightPanel(Transform cvTransform)
     {
+        // Alterado de anchorY 0f para 1f. Assim o painel ancora do topo e expande para baixo
         RectTransform p = VTTLayout.Panel("GM_Right", cvTransform,
-            new Vector2(1f, 0f), new Vector2(1f, 1f),
+            new Vector2(1f, 1f), new Vector2(1f, 1f),
             new Vector2(1f, 1f), W_RIGHT);
 
         float y = 0f;
@@ -101,13 +102,15 @@ public class GMUIController : MonoBehaviour
         y = DrawSecHeader(p, y, "INFORMACOES");
         y = DrawInfoSection(p, y);
 
+        // Agora sizeDelta.y define a altura correta baseada na soma dos conteudos
         p.sizeDelta = new Vector2(W_RIGHT, Mathf.Abs(y) + PAD);
     }
 
     private void BuildLeftPanel(Transform cvTransform)
     {
+        // Alterado de anchorY 0f para 1f
         RectTransform p = VTTLayout.Panel("GM_Left", cvTransform,
-            new Vector2(0f, 0f), new Vector2(0f, 1f),
+            new Vector2(0f, 1f), new Vector2(0f, 1f),
             new Vector2(0f, 1f), W_LEFT, VTTLayout.C_LEFT_BG);
 
         float y = 0f;
@@ -128,7 +131,8 @@ public class GMUIController : MonoBehaviour
 
     private float DrawMapSection(RectTransform p, float y)
     {
-        mapStatusText = VTTLayout.Label(p, y, -16f,
+        // Removido sinal negativo das alturas
+        mapStatusText = VTTLayout.Label(p, y, 16f,
             VTTLayout.F_SMALL, VTTLayout.C_TEXT_DIM);
         mapStatusText.text = "Nenhum mapa carregado";
         y -= 16f + GAP;
@@ -145,7 +149,7 @@ public class GMUIController : MonoBehaviour
 
     private float DrawCameraSection(RectTransform p, float y)
     {
-        TMP_Text zoomLbl = VTTLayout.Label(p, y, -16f,
+        TMP_Text zoomLbl = VTTLayout.Label(p, y, 16f,
             VTTLayout.F_SMALL, VTTLayout.C_TEXT_DIM, FontStyles.Bold);
         zoomLbl.text = "ZOOM";
         y -= 16f + 4f;
@@ -184,14 +188,14 @@ public class GMUIController : MonoBehaviour
             .onClick.AddListener(DoOpenDice);
         y -= BH + GAP;
 
-        TMP_Text histLbl = VTTLayout.Label(p, y, -14f,
+        TMP_Text histLbl = VTTLayout.Label(p, y, 14f,
             VTTLayout.F_SMALL, VTTLayout.C_TEXT_DIM, FontStyles.Bold);
         histLbl.text = "ULTIMAS ROLAGENS";
         y -= 14f + 3f;
 
         float boxH = 66f;
         RectTransform boxRT = VTTLayout.Box("HistBox", p,
-            0f, y, 0f, -boxH, VTTLayout.C_CONTENT_BG);
+            0f, y, 0f, boxH, VTTLayout.C_CONTENT_BG);
         VTTLayout.AccentBar(boxRT, 2f, VTTLayout.C_ACCENT);
         historyText = VTTLayout.LabelStretch("HistText", boxRT,
             new Vector2(PAD, 5f), new Vector2(-4f, -5f),
@@ -221,8 +225,7 @@ public class GMUIController : MonoBehaviour
         fogEraseBtn.onClick.AddListener(DoFogErase);
         y -= BH + GAP;
 
-        // Tamanho do pincel
-        TMP_Text brushLbl = VTTLayout.Label(p, y, -14f,
+        TMP_Text brushLbl = VTTLayout.Label(p, y, 14f,
             VTTLayout.F_SMALL, VTTLayout.C_TEXT_DIM);
         brushLbl.text = "Tamanho do pincel";
         y -= 14f + 3f;
@@ -247,7 +250,6 @@ public class GMUIController : MonoBehaviour
             .onClick.AddListener(DoIncreaseBrush);
         y -= bh2 + GAP;
 
-        // Limpar nevoa
         VTTLayout.BtnFull(p, y, BH - 4f, -PAD * 2f,
             "LIMPAR NEVOA",
             VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT,
@@ -255,7 +257,7 @@ public class GMUIController : MonoBehaviour
             .onClick.AddListener(DoFogClear);
         y -= (BH - 4f) + GAP;
 
-        fogStatusText = VTTLayout.Label(p, y, -14f,
+        fogStatusText = VTTLayout.Label(p, y, 14f,
             VTTLayout.F_SMALL, VTTLayout.C_TEXT_DIM);
         fogStatusText.text = "Ferramenta inativa";
         y -= 14f + SGAP;
@@ -267,10 +269,12 @@ public class GMUIController : MonoBehaviour
     {
         float boxH = 100f;
         RectTransform boxRT = VTTLayout.Box("InfoBox", p,
-            0f, y, 0f, -boxH, VTTLayout.C_CONTENT_BG);
+            0f, y, 0f, boxH, VTTLayout.C_CONTENT_BG);
         VTTLayout.AccentBar(boxRT, 2f, VTTLayout.C_ACCENT);
+
+        // Corrigido Offset (positivo em bottom, negativo em top para ficar interno)
         infoText = VTTLayout.LabelStretch("InfoText", boxRT,
-            new Vector2(PAD + 2f, -7f), new Vector2(-5f, 7f),
+            new Vector2(PAD + 2f, 7f), new Vector2(-5f, -7f),
             VTTLayout.F_LABEL, VTTLayout.C_TEXT,
             align: TextAlignmentOptions.TopLeft);
         infoText.lineSpacing = 9f;
@@ -284,7 +288,7 @@ public class GMUIController : MonoBehaviour
     {
         float boxH = 52f;
         RectTransform boxRT = VTTLayout.Box("PH", p,
-            0f, y, 0f, -boxH,
+            0f, y, 0f, boxH,
             VTTLayout.RGB(0.07f, 0.08f, 0.10f, 0.5f));
         VTTLayout.LabelStretch("PHText", boxRT,
             new Vector2(PAD, 5f), new Vector2(-PAD, -5f),
@@ -302,12 +306,13 @@ public class GMUIController : MonoBehaviour
     private float DrawPanelHeader(RectTransform p, float y, string title)
     {
         RectTransform hdrRT = VTTLayout.Box("PHdr", p,
-            0f, y, 0f, -PHH, VTTLayout.C_HDR_BG,
+            0f, y, 0f, PHH, VTTLayout.C_HDR_BG,
             new Vector2(0f, 1f), new Vector2(1f, 1f));
         VTTLayout.AccentBar(hdrRT, 3f, VTTLayout.C_ACCENT_LT);
 
+        // Corrigido Offset (positivo em bottom, negativo em top)
         TMP_Text t = VTTLayout.LabelStretch("PTitle", hdrRT,
-            new Vector2(PAD + 5f, -3f), new Vector2(-PAD, 3f),
+            new Vector2(PAD + 5f, 3f), new Vector2(-PAD, -3f),
             VTTLayout.F_PANEL, VTTLayout.C_TEXT_PANEL,
             FontStyles.Bold, TextAlignmentOptions.MidlineLeft);
         t.text = title;
@@ -320,7 +325,7 @@ public class GMUIController : MonoBehaviour
         y -= SGAP * 0.4f;
 
         RectTransform hdrRT = VTTLayout.Box("SHdr_" + label, p,
-            0f, y, 0f, -HH, VTTLayout.C_SEC_BG,
+            0f, y, 0f, HH, VTTLayout.C_SEC_BG,
             new Vector2(0f, 1f), new Vector2(1f, 1f));
         VTTLayout.AccentBar(hdrRT, 3f, VTTLayout.C_ACCENT);
 
@@ -330,8 +335,7 @@ public class GMUIController : MonoBehaviour
             FontStyles.Bold, TextAlignmentOptions.MidlineLeft);
         t.text = label;
 
-        // Linha divisoria de 1px abaixo
-        VTTLayout.Box("Div", p, 0f, y - HH, 0f, -1f, VTTLayout.C_ACCENT,
+        VTTLayout.Box("Div", p, 0f, y - HH, 0f, 1f, VTTLayout.C_ACCENT,
             new Vector2(0f, 1f), new Vector2(1f, 1f));
 
         return y - HH - 1f - GAP;
