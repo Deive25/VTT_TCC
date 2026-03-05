@@ -1,6 +1,11 @@
-// DiceRollOverlay.cs  v6
-// ASCII puro. Layout Groups. Multi-dado com historico.
-// Nao fecha automaticamente. Botao X para fechar.
+// ============================================================
+// DiceRollOverlay.cs  v5
+//
+// Sem emotes ou caracteres especiais (apenas ASCII + PT-BR).
+// Operadores C# corretos (ternario, null-coalescing).
+// Multi-dado: contador por tipo.
+// Nao fecha automaticamente; botao FECHAR manual.
+// ============================================================
 
 using System.Collections;
 using System.Collections.Generic;
@@ -11,42 +16,69 @@ using TMPro;
 
 public class DiceRollOverlay : MonoBehaviour
 {
-    private static readonly int[] DICE = { 4, 6, 8, 10, 12, 20 };
+    // --- Tipos de dado disponíveis ---------------------------
+    private static readonly int[] DICE_TYPES = { 4, 6, 8, 10, 12, 20 };
 
+    // --- Estrutura de entrada no historico -------------------
     public struct RollEntry
     {
-        public string descriptor;
-        public string breakdown;
+        public string descriptor;   // ex: "2D6 + 1D20"
         public int total;
     }
 
+    // --- Singleton -------------------------------------------
     public static DiceRollOverlay Instance { get; private set; }
 
+    // --- Historico publico -----------------------------------
     public List<RollEntry> History { get; } = new List<RollEntry>();
-    private const int MAX_HIST = 20;
+    private const int MAX_HISTORY = 20;
     public event System.Action OnHistoryChanged;
 
-    private readonly int[] _counts = new int[6];
-    private TMP_Text[] _countLabels;
+    // --- Estado interno --------------------------------------
+    private int[] _counts = new int[6];
+    private TMP_Text[] _countLabels = new TMP_Text[6];
     private bool _rolling = false;
 
+    // --- Referencias de UI -----------------------------------
     private GameObject _panel;
-    private TMP_Text _resultsText;
-    private TMP_Text _totalText;
+    private TMP_Text _resultBreakdown;
+    private TMP_Text _resultTotal;
     private TMP_Text _historyText;
 
-    // Cores por tipo de dado (indices paralelos a DICE[])
-    private static readonly Color[] DICE_COLORS =
-    {
-        new Color(0.20f, 0.65f, 0.60f, 1f),  // D4
-        new Color(0.28f, 0.52f, 0.85f, 1f),  // D6
-        new Color(0.60f, 0.30f, 0.80f, 1f),  // D8
-        new Color(0.22f, 0.45f, 0.75f, 1f),  // D10
-        new Color(0.45f, 0.22f, 0.65f, 1f),  // D12
-        new Color(0.85f, 0.65f, 0.12f, 1f),  // D20
+    // --- Paleta (local, sem deps externas) -------------------
+    private static Color CP(float r, float g, float b, float a = 1f) { return new Color(r, g, b, a); }
+
+    private static readonly Color COL_OVERLAY = CP(0.03f, 0.04f, 0.07f, 0.92f);
+    private static readonly Color COL_CARD = CP(0.10f, 0.12f, 0.17f, 1.00f);
+    private static readonly Color COL_HDR = CP(0.14f, 0.19f, 0.28f, 1.00f);
+    private static readonly Color COL_SEC_BG = CP(0.08f, 0.10f, 0.14f, 1.00f);
+    private static readonly Color COL_CONTENT = CP(0.06f, 0.07f, 0.10f, 1.00f);
+    private static readonly Color COL_ACCENT = CP(0.24f, 0.42f, 0.65f, 1.00f);
+    private static readonly Color COL_BTN_PRI = CP(0.18f, 0.34f, 0.56f, 1.00f);
+    private static readonly Color COL_BTN_SEC = CP(0.14f, 0.17f, 0.23f, 1.00f);
+    private static readonly Color COL_BTN_CLR = CP(0.20f, 0.20f, 0.26f, 1.00f);
+    private static readonly Color COL_BTN_CLSE = CP(0.40f, 0.14f, 0.14f, 1.00f);
+    private static readonly Color COL_BDR_DEF = CP(0.24f, 0.32f, 0.46f, 1.00f);
+    private static readonly Color COL_BDR_PRI = CP(0.34f, 0.54f, 0.80f, 1.00f);
+    private static readonly Color COL_BDR_CLSE = CP(0.65f, 0.22f, 0.22f, 1.00f);
+    private static readonly Color COL_TEXT = CP(0.86f, 0.90f, 0.97f, 1.00f);
+    private static readonly Color COL_DIM = CP(0.42f, 0.48f, 0.60f, 1.00f);
+    private static readonly Color COL_HDR_TEXT = CP(0.68f, 0.76f, 0.90f, 1.00f);
+    private static readonly Color COL_GOLD = CP(0.92f, 0.78f, 0.28f, 1.00f);
+    private static readonly Color COL_RED = CP(0.82f, 0.26f, 0.22f, 1.00f);
+
+    private static readonly Color[] COL_DICE = {
+        CP(0.20f, 0.60f, 0.55f),   // D4  teal
+        CP(0.24f, 0.50f, 0.82f),   // D6  azul
+        CP(0.55f, 0.28f, 0.75f),   // D8  roxo
+        CP(0.20f, 0.42f, 0.70f),   // D10 azul escuro
+        CP(0.40f, 0.20f, 0.60f),   // D12 violeta
+        CP(0.80f, 0.62f, 0.10f),   // D20 ouro
     };
 
-    // --- Lifecycle ---
+    // =========================================================
+    // Lifecycle
+    // =========================================================
 
     private void Awake()
     {
@@ -56,338 +88,368 @@ public class DiceRollOverlay : MonoBehaviour
     }
 
     // =========================================================
-    // Construcao
+    // Construcao do painel
     // =========================================================
 
     private void Build()
     {
-        Canvas cv = GetComponent<Canvas>() ?? FindObjectOfType<Canvas>();
+        Canvas cv = GetComponent<Canvas>();
+        if (cv == null) cv = FindAnyObjectByType<Canvas>();
 
-        // Overlay de fundo (bloqueia cliques no mapa)
-        _panel = VTTUIBuilder.MakeGO("DicePanel", cv.transform);
+        // --- Overlay (bloqueia cliques no mapa) --------------
+        _panel = MakeGO("DicePanel", cv.transform);
         RectTransform panelRT = _panel.AddComponent<RectTransform>();
         panelRT.anchorMin = Vector2.zero;
         panelRT.anchorMax = Vector2.one;
         panelRT.sizeDelta = Vector2.zero;
         Image overlayImg = _panel.AddComponent<Image>();
-        overlayImg.color = new Color(0.02f, 0.03f, 0.06f, 0.90f);
-        overlayImg.raycastTarget = true;
+        overlayImg.color = COL_OVERLAY;
+        overlayImg.raycastTarget = true;  // bloqueia cliques no mapa
 
-        // Card central
-        GameObject card = VTTUIBuilder.MakeGO("DiceCard", _panel.transform);
+        // --- Card central ------------------------------------
+        GameObject card = MakeGO("Card", _panel.transform);
         RectTransform cardRT = card.AddComponent<RectTransform>();
         cardRT.anchorMin = new Vector2(0.5f, 0.5f);
         cardRT.anchorMax = new Vector2(0.5f, 0.5f);
         cardRT.pivot = new Vector2(0.5f, 0.5f);
         cardRT.anchoredPosition = Vector2.zero;
-        cardRT.sizeDelta = new Vector2(400f, 0f);
+        cardRT.sizeDelta = new Vector2(400f, 520f);
+        MakeDeco(card, COL_CARD);
 
-        Image cardImg = card.AddComponent<Image>();
-        cardImg.color = VTTStyles.BG_SECTION;
-        cardImg.raycastTarget = false;
+        // Monta o conteudo de cima para baixo
+        float y = 0f;
+        float cw = 400f;
+        float pad = 14f;
+        float gap = 6f;
 
-        // VLG no card
-        VerticalLayoutGroup cardVLG = card.AddComponent<VerticalLayoutGroup>();
-        cardVLG.padding = new RectOffset(0, 0, 0, VTTStyles.GAP);
-        cardVLG.spacing = 0;
-        cardVLG.childAlignment = TextAnchor.UpperLeft;
-        cardVLG.childControlWidth = true;
-        cardVLG.childControlHeight = false;
-        cardVLG.childForceExpandWidth = true;
-        cardVLG.childForceExpandHeight = false;
-
-        ContentSizeFitter csf = card.AddComponent<ContentSizeFitter>();
-        csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-        csf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
-
-        // Secoes
-        BuildCardHeader(cardRT);
-
-        CardSectionHdr(cardRT, "CONFIGURAR DADOS");
-        var configSec = CardSection(cardRT);
-        _countLabels = new TMP_Text[DICE.Length];
-        BuildDiceGrid(configSec);
-
-        var actionSec = CardSection(cardRT, padV: 4);
-        BuildActionRow(actionSec);
-
-        CardSectionHdr(cardRT, "RESULTADO");
-        var resultSec = CardSection(cardRT);
-        BuildResultArea(resultSec);
-
-        CardSectionHdr(cardRT, "HISTORICO DA SESSAO");
-        var histSec = CardSection(cardRT);
-        _historyText = VTTUIBuilder.InfoBox(histSec, 72f);
-        _historyText.text = "Nenhuma rolagem ainda";
-        _historyText.color = VTTStyles.TXT_SECOND;
-        _historyText.lineSpacing = 6f;
+        y = BuildHeader(cardRT, y, cw, pad, gap);
+        y = BuildSecHdr(cardRT, y, "CONFIGURAR DADOS");
+        y -= 4f;
+        y = BuildDiceGrid(cardRT, y, cw, pad, gap);
+        y -= 8f;
+        y = BuildActionRow(cardRT, y, cw, pad, gap);
+        y = BuildSecHdr(cardRT, y - 6f, "RESULTADO");
+        y -= 4f;
+        y = BuildResultArea(cardRT, y, cw, pad);
+        y = BuildSecHdr(cardRT, y - 6f, "HISTORICO");
+        y -= 4f;
+        BuildHistoryArea(cardRT, y, cw, pad);
     }
 
-    // --- Header do card ---
+    // --- Header (titulo + botao FECHAR) ----------------------
 
-    private void BuildCardHeader(RectTransform parent)
+    private float BuildHeader(RectTransform parent, float y, float cw, float pad, float gap)
     {
-        GameObject hdr = VTTUIBuilder.MakeGO("CardHeader", parent);
-        Image hdrImg = hdr.AddComponent<Image>();
-        hdrImg.color = VTTStyles.BG_HEADER;
-        hdrImg.raycastTarget = false;
-        LayoutElement hdrLE = hdr.AddComponent<LayoutElement>();
-        hdrLE.preferredHeight = VTTStyles.H_PANEL_HDR;
-        hdrLE.flexibleWidth = 1f;
+        float h = 42f;
+        float closeSz = 30f;
 
-        VTTUIBuilder.AccentBar(hdr.GetComponent<RectTransform>(), 3f, VTTStyles.ACCENT_LT);
+        // Fundo do header
+        GameObject hdrBg = MakeGO("HdrBg", parent);
+        RectTransform hrtBG = hdrBg.AddComponent<RectTransform>();
+        hrtBG.anchorMin = new Vector2(0f, 1f);
+        hrtBG.anchorMax = new Vector2(1f, 1f);
+        hrtBG.pivot = new Vector2(0.5f, 1f);
+        hrtBG.anchoredPosition = new Vector2(0f, y);
+        hrtBG.sizeDelta = new Vector2(0f, -h);
+        MakeDeco(hdrBg, COL_HDR);
 
-        TMP_Text title = VTTUIBuilder.StretchText("Title", hdr.transform,
-            new Vector2(VTTStyles.PAD_PANEL + 5f, -4f),
-            new Vector2(-52f, 4f));
+        // Barra de acento
+        GameObject acc = MakeGO("Acc", hrtBG);
+        RectTransform accRT = acc.AddComponent<RectTransform>();
+        accRT.anchorMin = Vector2.zero;
+        accRT.anchorMax = new Vector2(0f, 1f);
+        accRT.pivot = new Vector2(0f, 0.5f);
+        accRT.anchoredPosition = Vector2.zero;
+        accRT.sizeDelta = new Vector2(3f, 0f);
+        MakeDeco(acc, COL_ACCENT);
+
+        // Titulo
+        TMP_Text title = MakeLabel("Title", parent);
+        RectTransform titleRT = title.GetComponent<RectTransform>();
+        titleRT.anchorMin = new Vector2(0f, 1f);
+        titleRT.anchorMax = new Vector2(1f, 1f);
+        titleRT.pivot = new Vector2(0f, 1f);
+        titleRT.anchoredPosition = new Vector2(pad + 5f, y);
+        titleRT.sizeDelta = new Vector2(-(pad * 2f + closeSz + gap), -h);
         title.text = "ROLAGEM DE DADOS";
-        title.fontSize = VTTStyles.F_TITLE;
+        title.fontSize = 12f;
         title.fontStyle = FontStyles.Bold;
-        title.color = new Color(0.94f, 0.96f, 1.00f, 1f);
+        title.color = COL_TEXT;
         title.alignment = TextAlignmentOptions.MidlineLeft;
 
-        // Botao X (posicionado manualmente dentro do header fixo)
-        GameObject xWrap = VTTUIBuilder.MakeGO("CloseWrap", hdr.transform);
-        RectTransform xWRT = xWrap.AddComponent<RectTransform>();
-        xWRT.anchorMin = new Vector2(1f, 0.5f);
-        xWRT.anchorMax = new Vector2(1f, 0.5f);
-        xWRT.pivot = new Vector2(1f, 0.5f);
-        xWRT.anchoredPosition = new Vector2(-VTTStyles.PAD_PANEL, 0f);
-        xWRT.sizeDelta = new Vector2(32f, 26f);
-        Image xBdr = xWrap.AddComponent<Image>();
-        xBdr.color = VTTStyles.BDR_DANGER;
-        xBdr.raycastTarget = false;
+        // Botao FECHAR (posicao fixa no topo direito)
+        float btnY = y - (h - closeSz) * 0.5f;
+        MakeBtn("BtnClose", parent,
+            new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(1f, 1f),
+            new Vector2(cw - pad - closeSz, btnY),
+            new Vector2(closeSz, closeSz),
+            "X", COL_BTN_CLSE, COL_BDR_CLSE, COL_TEXT, 11f, true)
+            .onClick.AddListener(ClosePanel);
 
-        Button closeBtn = VTTUIBuilder.InnerBtn(xWrap.transform, "X",
-            VTTStyles.BTN_DANGER, VTTStyles.TXT_PRIMARY, VTTStyles.F_BUTTON, true);
-        closeBtn.onClick.AddListener(ClosePanel);
+        return y - h;
     }
 
-    // --- Grid 2x3 de dados ---
+    // --- Section header interno ------------------------------
 
-    private void BuildDiceGrid(RectTransform parent)
+    private float BuildSecHdr(RectTransform parent, float y, string label)
     {
+        float h = 22f;
+
+        GameObject bg = MakeGO("SH_" + label, parent);
+        RectTransform bgRT = bg.AddComponent<RectTransform>();
+        bgRT.anchorMin = new Vector2(0f, 1f);
+        bgRT.anchorMax = new Vector2(1f, 1f);
+        bgRT.pivot = new Vector2(0.5f, 1f);
+        bgRT.anchoredPosition = new Vector2(0f, y);
+        bgRT.sizeDelta = new Vector2(0f, -h);
+        MakeDeco(bg, COL_SEC_BG);
+
+        GameObject acc = MakeGO("Acc", bgRT);
+        RectTransform accRT = acc.AddComponent<RectTransform>();
+        accRT.anchorMin = Vector2.zero;
+        accRT.anchorMax = new Vector2(0f, 1f);
+        accRT.pivot = new Vector2(0f, 0.5f);
+        accRT.anchoredPosition = Vector2.zero;
+        accRT.sizeDelta = new Vector2(3f, 0f);
+        MakeDeco(acc, COL_ACCENT);
+
+        TMP_Text t = MakeLabel("SHL", parent);
+        RectTransform tRT = t.GetComponent<RectTransform>();
+        tRT.anchorMin = new Vector2(0f, 1f);
+        tRT.anchorMax = new Vector2(1f, 1f);
+        tRT.pivot = new Vector2(0f, 1f);
+        tRT.anchoredPosition = new Vector2(8f, y);
+        tRT.sizeDelta = new Vector2(-8f, -h);
+        t.text = label;
+        t.fontSize = 9f;
+        t.fontStyle = FontStyles.Bold;
+        t.color = COL_HDR_TEXT;
+        t.alignment = TextAlignmentOptions.MidlineLeft;
+
+        return y - h;
+    }
+
+    // --- Grid de dados (2 colunas x 3 linhas) ----------------
+
+    private float BuildDiceGrid(RectTransform parent, float y,
+        float cw, float pad, float gap)
+    {
+        float inner = cw - pad * 2f;
+        float colGap = 6f;
+        float cellW = (inner - colGap) * 0.5f;
+        float cellH = 28f;
+        float rowGap = 5f;
         int cols = 2;
-        for (int row = 0; row < 3; row++)
+        int rows = (DICE_TYPES.Length + cols - 1) / cols;
+
+        for (int row = 0; row < rows; row++)
         {
-            GameObject rowGO = VTTUIBuilder.MakeGO("DiceRow" + row, parent);
-            Image rowImg = rowGO.AddComponent<Image>();
-            rowImg.color = VTTStyles.BG_CLEAR;
-            rowImg.raycastTarget = false;
-            LayoutElement rowLE = rowGO.AddComponent<LayoutElement>();
-            rowLE.preferredHeight = VTTStyles.H_BUTTON_SM + 4f;
-            rowLE.flexibleWidth = 1f;
-
-            HorizontalLayoutGroup hlg = rowGO.AddComponent<HorizontalLayoutGroup>();
-            hlg.spacing = VTTStyles.GAP;
-            hlg.padding = new RectOffset(0, 0, 0, 0);
-            hlg.childAlignment = TextAnchor.MiddleLeft;
-            hlg.childControlWidth = true;
-            hlg.childControlHeight = true;
-            hlg.childForceExpandWidth = true;
-            hlg.childForceExpandHeight = true;
-
+            float rowY = y - row * (cellH + rowGap);
             for (int col = 0; col < cols; col++)
             {
                 int idx = row * cols + col;
-                if (idx >= DICE.Length) break;
-                BuildDiceCell(rowGO.transform, idx);
+                if (idx >= DICE_TYPES.Length) break;
+                float cellX = pad + col * (cellW + colGap);
+                BuildDiceCell(parent, idx, cellX, rowY, cellW, cellH, pad, gap);
             }
         }
+
+        float totalH = rows * cellH + (rows - 1) * rowGap;
+        return y - totalH;
     }
 
-    private void BuildDiceCell(Transform parent, int diceIdx)
+    private void BuildDiceCell(RectTransform parent, int diceIdx,
+        float cellX, float cellY, float cellW, float cellH,
+        float pad, float gap)
     {
-        int sides = DICE[diceIdx];
-        Color dc = DICE_COLORS[diceIdx];
+        int sides = DICE_TYPES[diceIdx];
+        Color dc = COL_DICE[diceIdx];
 
-        GameObject cell = VTTUIBuilder.MakeGO("Cell_D" + sides, parent);
-        Image cellImg = cell.AddComponent<Image>();
-        cellImg.color = VTTStyles.BG_ITEM;
-        cellImg.raycastTarget = false;
+        // Fundo da celula
+        GameObject bg = MakeGO("Cell_D" + sides, parent);
+        RectTransform bgRT = bg.AddComponent<RectTransform>();
+        bgRT.anchorMin = new Vector2(0f, 1f);
+        bgRT.anchorMax = new Vector2(0f, 1f);
+        bgRT.pivot = new Vector2(0f, 1f);
+        bgRT.anchoredPosition = new Vector2(cellX, cellY);
+        bgRT.sizeDelta = new Vector2(cellW, -cellH);
+        MakeDeco(bg, COL_SEC_BG);
 
-        HorizontalLayoutGroup hlg = cell.AddComponent<HorizontalLayoutGroup>();
-        hlg.padding = new RectOffset(VTTStyles.GAP, VTTStyles.GAP, 2, 2);
-        hlg.spacing = VTTStyles.GAP_SM;
-        hlg.childAlignment = TextAnchor.MiddleLeft;
-        hlg.childControlWidth = false;
-        hlg.childControlHeight = true;
-        hlg.childForceExpandWidth = false;
-        hlg.childForceExpandHeight = true;
+        // Barra de acento colorida na esquerda
+        GameObject acc = MakeGO("Acc", bgRT);
+        RectTransform accRT = acc.AddComponent<RectTransform>();
+        accRT.anchorMin = Vector2.zero;
+        accRT.anchorMax = new Vector2(0f, 1f);
+        accRT.pivot = new Vector2(0f, 0.5f);
+        accRT.anchoredPosition = Vector2.zero;
+        accRT.sizeDelta = new Vector2(3f, 0f);
+        MakeDeco(acc, dc);
 
-        // Barra de acento colorida
-        GameObject ac = VTTUIBuilder.MakeGO("Ac", cell.transform);
-        Image acImg = ac.AddComponent<Image>();
-        acImg.color = dc;
-        acImg.raycastTarget = false;
-        ac.AddComponent<LayoutElement>().preferredWidth = 3f;
+        // Label do tipo de dado
+        TMP_Text dLabel = MakeLabel("DL_D" + sides, parent);
+        RectTransform dlRT = dLabel.GetComponent<RectTransform>();
+        dlRT.anchorMin = new Vector2(0f, 1f);
+        dlRT.anchorMax = new Vector2(0f, 1f);
+        dlRT.pivot = new Vector2(0f, 1f);
+        dlRT.anchoredPosition = new Vector2(cellX + 6f, cellY);
+        dlRT.sizeDelta = new Vector2(40f, -cellH);
+        dLabel.text = "D" + sides;
+        dLabel.fontSize = 10f;
+        dLabel.fontStyle = FontStyles.Bold;
+        dLabel.color = dc;
+        dLabel.alignment = TextAlignmentOptions.MidlineLeft;
 
-        // Label do dado
-        GameObject lblGO = VTTUIBuilder.MakeGO("DLbl", cell.transform);
-        TMP_Text lbl = lblGO.AddComponent<TextMeshProUGUI>();
-        lbl.text = "D" + sides;
-        lbl.fontSize = VTTStyles.F_INFO;
-        lbl.fontStyle = FontStyles.Bold;
-        lbl.color = dc;
-        lbl.alignment = TextAlignmentOptions.MidlineLeft;
-        lbl.raycastTarget = false;
-        lblGO.AddComponent<LayoutElement>().preferredWidth = 38f;
+        // Controles  (- count +)  alinhados a direita da celula
+        float btnSz = 22f;
+        float cntW = 28f;
+        float ctrlTot = btnSz + gap + cntW + gap + btnSz;
+        float ctrlStartX = cellX + cellW - ctrlTot - 4f;
+        float btnH = cellH - 6f;
+        float btnY = cellY - (cellH - btnH) * 0.5f;
 
-        // Spacer
-        GameObject sp = VTTUIBuilder.MakeGO("Sp", cell.transform);
-        Image spImg = sp.AddComponent<Image>();
-        spImg.color = VTTStyles.BG_CLEAR;
-        spImg.raycastTarget = false;
-        sp.AddComponent<LayoutElement>().flexibleWidth = 1f;
-
-        // Botao -
         int capturedIdx = diceIdx;
-        GameObject mW = VTTUIBuilder.MakeGO("MinusWrap", cell.transform);
-        Image mI = mW.AddComponent<Image>();
-        mI.color = VTTStyles.BDR_DEFAULT;
-        mI.raycastTarget = false;
-        mW.AddComponent<LayoutElement>().preferredWidth = 24f;
-        Button minusBtn = VTTUIBuilder.InnerBtn(mW.transform, "-",
-            VTTStyles.BTN_SECOND, VTTStyles.TXT_PRIMARY, VTTStyles.F_BUTTON, true);
-        minusBtn.onClick.AddListener(() => ChangeCount(capturedIdx, -1));
 
-        // Count label
-        GameObject cG = VTTUIBuilder.MakeGO("CntBg", cell.transform);
-        Image cI = cG.AddComponent<Image>();
-        cI.color = VTTStyles.BG_INSET;
-        cI.raycastTarget = false;
-        cG.AddComponent<LayoutElement>().preferredWidth = 28f;
-        TMP_Text cntLbl = VTTUIBuilder.StretchText("Cnt", cG.transform,
-            Vector2.zero, Vector2.zero);
-        cntLbl.text = "0";
-        cntLbl.fontSize = VTTStyles.F_INFO;
-        cntLbl.fontStyle = FontStyles.Bold;
-        cntLbl.color = VTTStyles.TXT_PRIMARY;
-        cntLbl.alignment = TextAlignmentOptions.Center;
-        _countLabels[diceIdx] = cntLbl;
+        // Botao menos
+        MakeBtn("Minus_D" + sides, parent,
+            new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f),
+            new Vector2(ctrlStartX, btnY),
+            new Vector2(btnSz, btnH),
+            "-", COL_BTN_SEC, COL_BDR_DEF, COL_TEXT, 13f, true)
+            .onClick.AddListener(() => ChangeCount(capturedIdx, -1));
 
-        // Botao +
-        GameObject pW = VTTUIBuilder.MakeGO("PlusWrap", cell.transform);
-        Image pI = pW.AddComponent<Image>();
-        pI.color = VTTStyles.BDR_DEFAULT;
-        pI.raycastTarget = false;
-        pW.AddComponent<LayoutElement>().preferredWidth = 24f;
-        Button plusBtn = VTTUIBuilder.InnerBtn(pW.transform, "+",
-            VTTStyles.BTN_SECOND, VTTStyles.TXT_PRIMARY, VTTStyles.F_BUTTON, true);
-        plusBtn.onClick.AddListener(() => ChangeCount(capturedIdx, +1));
+        // Contador
+        TMP_Text cntLabel = MakeLabel("Cnt_D" + sides, parent);
+        RectTransform cntRT = cntLabel.GetComponent<RectTransform>();
+        cntRT.anchorMin = new Vector2(0f, 1f);
+        cntRT.anchorMax = new Vector2(0f, 1f);
+        cntRT.pivot = new Vector2(0f, 1f);
+        cntRT.anchoredPosition = new Vector2(ctrlStartX + btnSz + gap, btnY);
+        cntRT.sizeDelta = new Vector2(cntW, -btnH);
+        cntLabel.text = "0";
+        cntLabel.fontSize = 12f;
+        cntLabel.fontStyle = FontStyles.Bold;
+        cntLabel.color = COL_TEXT;
+        cntLabel.alignment = TextAlignmentOptions.Center;
+        _countLabels[diceIdx] = cntLabel;
+
+        // Botao mais
+        MakeBtn("Plus_D" + sides, parent,
+            new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f),
+            new Vector2(ctrlStartX + btnSz + gap + cntW + gap, btnY),
+            new Vector2(btnSz, btnH),
+            "+", COL_BTN_SEC, COL_BDR_DEF, COL_TEXT, 13f, true)
+            .onClick.AddListener(() => ChangeCount(capturedIdx, +1));
     }
 
-    // --- Linha de acoes ---
+    // --- Linha de acao (LIMPAR + ROLAR) ----------------------
 
-    private void BuildActionRow(RectTransform parent)
+    private float BuildActionRow(RectTransform parent, float y,
+        float cw, float pad, float gap)
     {
-        GameObject row = VTTUIBuilder.MakeGO("ActionRow", parent);
-        Image rowImg = row.AddComponent<Image>();
-        rowImg.color = VTTStyles.BG_CLEAR;
-        rowImg.raycastTarget = false;
-        LayoutElement le = row.AddComponent<LayoutElement>();
-        le.preferredHeight = VTTStyles.H_BUTTON;
-        le.flexibleWidth = 1f;
+        float h = 36f;
+        float hw = (cw - pad * 2f - gap) * 0.5f;
 
-        HorizontalLayoutGroup hlg = row.AddComponent<HorizontalLayoutGroup>();
-        hlg.spacing = VTTStyles.GAP;
-        hlg.padding = new RectOffset(0, 0, 0, 0);
-        hlg.childAlignment = TextAnchor.MiddleLeft;
-        hlg.childControlWidth = true;
-        hlg.childControlHeight = true;
-        hlg.childForceExpandWidth = true;
-        hlg.childForceExpandHeight = true;
+        MakeBtn("BtnClear", parent,
+            new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f),
+            new Vector2(pad, y), new Vector2(hw, h),
+            "LIMPAR", COL_BTN_CLR, COL_BDR_DEF, COL_DIM, 10f, true)
+            .onClick.AddListener(ClearSelection);
 
-        GameObject cW = VTTUIBuilder.MakeGO("ClearWrap", row.transform);
-        Image cI = cW.AddComponent<Image>();
-        cI.color = VTTStyles.BDR_DEFAULT;
-        cI.raycastTarget = false;
-        Button clearBtn = VTTUIBuilder.InnerBtn(cW.transform, "LIMPAR",
-            VTTStyles.BTN_NEUTRAL, VTTStyles.TXT_SECOND, VTTStyles.F_BUTTON, true);
-        clearBtn.onClick.AddListener(ClearSelection);
+        MakeBtn("BtnRoll", parent,
+            new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f),
+            new Vector2(pad + hw + gap, y), new Vector2(hw, h),
+            "ROLAR", COL_BTN_PRI, COL_BDR_PRI, COL_TEXT, 12f, true)
+            .onClick.AddListener(DoRoll);
 
-        GameObject rW = VTTUIBuilder.MakeGO("RollWrap", row.transform);
-        Image rI = rW.AddComponent<Image>();
-        rI.color = VTTStyles.BDR_ACCENT;
-        rI.raycastTarget = false;
-        Button rollBtn = VTTUIBuilder.InnerBtn(rW.transform, "ROLAR",
-            VTTStyles.BTN_PRIMARY, VTTStyles.TXT_PRIMARY, VTTStyles.F_BUTTON + 1f, true);
-        rollBtn.onClick.AddListener(DoRoll);
+        return y - h;
     }
 
-    // --- Area de resultado ---
+    // --- Area de resultado -----------------------------------
 
-    private void BuildResultArea(RectTransform parent)
+    private float BuildResultArea(RectTransform parent, float y,
+        float cw, float pad)
     {
-        _resultsText = VTTUIBuilder.InfoBox(parent, 36f);
-        _resultsText.text = "--";
-        _resultsText.color = VTTStyles.TXT_SECOND;
-        _resultsText.alignment = TextAlignmentOptions.MidlineLeft;
+        float boxH = 44f;
 
-        GameObject tGO = VTTUIBuilder.MakeGO("TotalCont", parent);
-        Image tImg = tGO.AddComponent<Image>();
-        tImg.color = VTTStyles.BG_CLEAR;
-        tImg.raycastTarget = false;
-        LayoutElement tLE = tGO.AddComponent<LayoutElement>();
-        tLE.preferredHeight = 24f;
-        tLE.flexibleWidth = 1f;
+        GameObject box = MakeGO("ResultBox", parent);
+        RectTransform boxRT = box.AddComponent<RectTransform>();
+        boxRT.anchorMin = new Vector2(0f, 1f);
+        boxRT.anchorMax = new Vector2(1f, 1f);
+        boxRT.pivot = new Vector2(0f, 1f);
+        boxRT.anchoredPosition = new Vector2(0f, y);
+        boxRT.sizeDelta = new Vector2(0f, -boxH);
+        MakeDeco(box, COL_CONTENT);
 
-        _totalText = VTTUIBuilder.StretchText("Total", tGO.transform,
-            Vector2.zero, Vector2.zero);
-        _totalText.text = "";
-        _totalText.fontSize = VTTStyles.F_TITLE;
-        _totalText.fontStyle = FontStyles.Bold;
-        _totalText.color = VTTStyles.TXT_GOLD;
-        _totalText.alignment = TextAlignmentOptions.Center;
+        // Barra de acento
+        GameObject acc = MakeGO("Acc", boxRT);
+        RectTransform accRT = acc.AddComponent<RectTransform>();
+        accRT.anchorMin = Vector2.zero;
+        accRT.anchorMax = new Vector2(0f, 1f);
+        accRT.pivot = new Vector2(0f, 0.5f);
+        accRT.anchoredPosition = Vector2.zero;
+        accRT.sizeDelta = new Vector2(2f, 0f);
+        MakeDeco(acc, COL_ACCENT);
+
+        // Breakdown (dados individuais)
+        _resultBreakdown = MakeStretchLabel("Breakdown", boxRT,
+            new Vector2(pad, 5f), new Vector2(-4f, -5f));
+        _resultBreakdown.fontSize = 10f;
+        _resultBreakdown.color = COL_DIM;
+        _resultBreakdown.text = "--";
+        _resultBreakdown.alignment = TextAlignmentOptions.MidlineLeft;
+
+        y -= boxH + 4f;
+
+        // Total
+        _resultTotal = MakeLabel("Total", parent);
+        RectTransform totalRT = _resultTotal.GetComponent<RectTransform>();
+        totalRT.anchorMin = new Vector2(0f, 1f);
+        totalRT.anchorMax = new Vector2(1f, 1f);
+        totalRT.pivot = new Vector2(0.5f, 1f);
+        totalRT.anchoredPosition = new Vector2(0f, y);
+        totalRT.sizeDelta = new Vector2(0f, -22f);
+        _resultTotal.fontSize = 14f;
+        _resultTotal.fontStyle = FontStyles.Bold;
+        _resultTotal.color = COL_GOLD;
+        _resultTotal.text = "";
+        _resultTotal.alignment = TextAlignmentOptions.Center;
+
+        y -= 22f;
+        return y;
     }
 
-    // --- Section header interno do card ---
+    // --- Area de historico -----------------------------------
 
-    private void CardSectionHdr(RectTransform parent, string label)
+    private void BuildHistoryArea(RectTransform parent, float y,
+        float cw, float pad)
     {
-        GameObject go = VTTUIBuilder.MakeGO("CSHdr_" + label, parent);
-        Image img = go.AddComponent<Image>();
-        img.color = VTTStyles.BG_INSET;
-        img.raycastTarget = false;
-        LayoutElement le = go.AddComponent<LayoutElement>();
-        le.preferredHeight = VTTStyles.H_SEC_HDR;
-        le.flexibleWidth = 1f;
+        float boxH = 76f;
 
-        VTTUIBuilder.AccentBar(go.GetComponent<RectTransform>(), 3f, VTTStyles.ACCENT);
+        GameObject box = MakeGO("HistBox", parent);
+        RectTransform boxRT = box.AddComponent<RectTransform>();
+        boxRT.anchorMin = new Vector2(0f, 1f);
+        boxRT.anchorMax = new Vector2(1f, 1f);
+        boxRT.pivot = new Vector2(0f, 1f);
+        boxRT.anchoredPosition = new Vector2(0f, y);
+        boxRT.sizeDelta = new Vector2(0f, -boxH);
+        MakeDeco(box, COL_CONTENT);
 
-        TMP_Text t = VTTUIBuilder.StretchText("Lbl", go.transform,
-            new Vector2(VTTStyles.PAD_PANEL + 5f, 0f),
-            new Vector2(-VTTStyles.PAD_PANEL, 0f));
-        t.text = label;
-        t.fontSize = VTTStyles.F_SECTION;
-        t.fontStyle = FontStyles.Bold;
-        t.color = VTTStyles.TXT_HEADER;
-        t.alignment = TextAlignmentOptions.MidlineLeft;
-    }
+        GameObject acc = MakeGO("Acc", boxRT);
+        RectTransform accRT = acc.AddComponent<RectTransform>();
+        accRT.anchorMin = Vector2.zero;
+        accRT.anchorMax = new Vector2(0f, 1f);
+        accRT.pivot = new Vector2(0f, 0.5f);
+        accRT.anchoredPosition = Vector2.zero;
+        accRT.sizeDelta = new Vector2(2f, 0f);
+        MakeDeco(acc, COL_ACCENT);
 
-    private RectTransform CardSection(RectTransform parent, int padV = 0)
-    {
-        GameObject go = VTTUIBuilder.MakeGO("CSec", parent);
-        Image img = go.AddComponent<Image>();
-        img.color = VTTStyles.BG_SECTION;
-        img.raycastTarget = false;
-
-        VerticalLayoutGroup vlg = go.AddComponent<VerticalLayoutGroup>();
-        vlg.padding = new RectOffset(
-            VTTStyles.PAD_PANEL, VTTStyles.PAD_PANEL,
-            VTTStyles.GAP + padV, VTTStyles.GAP + padV);
-        vlg.spacing = VTTStyles.GAP;
-        vlg.childControlWidth = true;
-        vlg.childControlHeight = false;
-        vlg.childForceExpandWidth = true;
-        vlg.childForceExpandHeight = false;
-
-        ContentSizeFitter csf = go.AddComponent<ContentSizeFitter>();
-        csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-        csf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
-
-        go.AddComponent<LayoutElement>().flexibleWidth = 1f;
-        return go.GetComponent<RectTransform>();
+        _historyText = MakeStretchLabel("HistText", boxRT,
+            new Vector2(pad, 5f), new Vector2(-4f, -5f));
+        _historyText.fontSize = 9.5f;
+        _historyText.color = COL_DIM;
+        _historyText.text = "Nenhuma rolagem ainda";
+        _historyText.lineSpacing = 5f;
+        _historyText.alignment = TextAlignmentOptions.TopLeft;
     }
 
     // =========================================================
@@ -408,12 +470,6 @@ public class DiceRollOverlay : MonoBehaviour
             _counts[i] = 0;
             if (_countLabels[i] != null) _countLabels[i].text = "0";
         }
-        if (_resultsText != null)
-        {
-            _resultsText.text = "--";
-            _resultsText.color = VTTStyles.TXT_SECOND;
-        }
-        if (_totalText != null) _totalText.text = "";
     }
 
     private void DoRoll()
@@ -430,57 +486,63 @@ public class DiceRollOverlay : MonoBehaviour
     {
         _rolling = true;
 
-        var spec = new List<(int sides, int count)>();
-        for (int i = 0; i < DICE.Length; i++)
-            if (_counts[i] > 0) spec.Add((DICE[i], _counts[i]));
-
-        var results = new List<(int sides, int value)>();
-        foreach (var (sides, count) in spec)
-            for (int k = 0; k < count; k++)
-                results.Add((sides, Random.Range(1, sides + 1)));
-
-        var descParts = new List<string>();
-        foreach (var (sides, count) in spec)
-            descParts.Add(count + "D" + sides);
+        // Coleta a especificacao
+        List<int> rollSides = new List<int>();
+        List<string> descParts = new List<string>();
+        for (int i = 0; i < DICE_TYPES.Length; i++)
+        {
+            if (_counts[i] <= 0) continue;
+            for (int k = 0; k < _counts[i]; k++)
+                rollSides.Add(DICE_TYPES[i]);
+            descParts.Add(_counts[i] + "D" + DICE_TYPES[i]);
+        }
         string descriptor = string.Join(" + ", descParts);
 
-        _resultsText.text = "...";
-        _resultsText.color = VTTStyles.TXT_SECOND;
-        _totalText.text = "";
+        // Rola
+        int[] results = new int[rollSides.Count];
+        for (int i = 0; i < results.Length; i++)
+            results[i] = Random.Range(1, rollSides[i] + 1);
 
+        // Animacao
+        _resultBreakdown.text = "rolando...";
+        _resultTotal.text = "";
         float elapsed = 0f;
-        while (elapsed < 0.65f)
+        while (elapsed < 0.6f)
         {
-            var sb2 = new StringBuilder();
-            foreach (var (sides, _) in results)
-                sb2.Append("D" + sides + ":" + Random.Range(1, sides + 1) + "  ");
-            _resultsText.text = sb2.ToString().TrimEnd();
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < rollSides.Count; i++)
+            {
+                sb.Append("D" + rollSides[i] + ":" + Random.Range(1, rollSides[i] + 1));
+                if (i < rollSides.Count - 1) sb.Append("  ");
+            }
+            _resultBreakdown.text = sb.ToString();
             elapsed += 0.05f;
             yield return new WaitForSeconds(0.05f);
         }
 
+        // Resultado final
         int total = 0;
-        var brkParts = new List<string>();
-        foreach (var (sides, val) in results)
+        StringBuilder brkSB = new StringBuilder();
+        for (int i = 0; i < rollSides.Count; i++)
         {
-            string col = val == sides ? "#E8BE3C"
-                       : val == 1 ? "#CC3C34"
-                                     : "#8AACD0";
-            brkParts.Add("<color=" + col + ">D" + sides + ":" + val + "</color>");
+            int val = results[i];
+            int sides = rollSides[i];
             total += val;
+
+            string colHex;
+            if (val == sides) colHex = "#E8C84A";
+            else if (val == 1) colHex = "#CF4040";
+            else colHex = "#8AACCC";
+
+            brkSB.Append("<color=" + colHex + ">D" + sides + ":" + val + "</color>");
+            if (i < rollSides.Count - 1) brkSB.Append("  ");
         }
+        _resultBreakdown.text = brkSB.ToString();
+        _resultTotal.text = "TOTAL:  " + total;
 
-        _resultsText.text = string.Join("  ", brkParts);
-        _resultsText.color = VTTStyles.TXT_PRIMARY;
-        _totalText.text = "TOTAL:  " + total;
-
-        History.Insert(0, new RollEntry
-        {
-            descriptor = descriptor,
-            breakdown = string.Join("  ", brkParts),
-            total = total
-        });
-        if (History.Count > MAX_HIST) History.RemoveAt(History.Count - 1);
+        // Registro no historico
+        History.Insert(0, new RollEntry { descriptor = descriptor, total = total });
+        if (History.Count > MAX_HISTORY) History.RemoveAt(History.Count - 1);
         OnHistoryChanged?.Invoke();
         RefreshHistoryText();
 
@@ -493,21 +555,21 @@ public class DiceRollOverlay : MonoBehaviour
         if (History.Count == 0)
         {
             _historyText.text = "Nenhuma rolagem ainda";
-            _historyText.color = VTTStyles.TXT_SECOND;
             return;
         }
-        var sb = new StringBuilder();
+        StringBuilder sb = new StringBuilder();
         int show = Mathf.Min(History.Count, 4);
         for (int i = 0; i < show; i++)
         {
-            sb.Append(History[i].descriptor + " -> " + History[i].total);
+            sb.Append(History[i].descriptor + "  =>  " + History[i].total);
             if (i < show - 1) sb.Append("\n");
         }
         _historyText.text = sb.ToString();
-        _historyText.color = VTTStyles.TXT_PRIMARY;
     }
 
-    // --- API Publica ---
+    // =========================================================
+    // API Publica
+    // =========================================================
 
     public void OpenPanel()
     {
@@ -520,5 +582,113 @@ public class DiceRollOverlay : MonoBehaviour
         StopAllCoroutines();
         _rolling = false;
         _panel.SetActive(false);
+    }
+
+    // =========================================================
+    // Fabrica de widgets (raycast discipline aplicada)
+    // =========================================================
+
+    private GameObject MakeGO(string name, Transform parent)
+    {
+        GameObject go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        return go;
+    }
+
+    /// <summary>Image decorativa: raycastTarget = false.</summary>
+    private void MakeDeco(GameObject go, Color color)
+    {
+        Image img = go.AddComponent<Image>();
+        img.color = color;
+        img.raycastTarget = false;
+    }
+
+    /// <summary>TMP_Text: raycastTarget = false.</summary>
+    private TMP_Text MakeLabel(string name, Transform parent)
+    {
+        GameObject go = MakeGO(name, parent);
+        go.AddComponent<RectTransform>();   // layout definido pelo chamador
+        TMP_Text t = go.AddComponent<TextMeshProUGUI>();
+        t.raycastTarget = false;
+        return t;
+    }
+
+    /// <summary>TMP_Text esticado dentro de um parent.</summary>
+    private TMP_Text MakeStretchLabel(string name, RectTransform parent,
+        Vector2 offsetMin, Vector2 offsetMax)
+    {
+        GameObject go = MakeGO(name, parent);
+        RectTransform rt = go.AddComponent<RectTransform>();
+        rt.anchorMin = Vector2.zero;
+        rt.anchorMax = Vector2.one;
+        rt.offsetMin = offsetMin;
+        rt.offsetMax = offsetMax;
+        TMP_Text t = go.AddComponent<TextMeshProUGUI>();
+        t.raycastTarget = false;
+        return t;
+    }
+
+    /// <summary>
+    /// Botao com borda visivel.
+    /// Wrapper borda:   Image raycastTarget = false
+    /// Botao interior:  Image raycastTarget = true  (targetGraphic)
+    /// Label filho:     TMP_Text raycastTarget = false
+    /// </summary>
+    private Button MakeBtn(string name, RectTransform parent,
+        Vector2 anchorMin, Vector2 anchorMax, Vector2 pivot,
+        Vector2 anchoredPos, Vector2 size,
+        string label, Color bg, Color border, Color tc, float fs, bool bold)
+    {
+        // Wrapper de borda
+        GameObject wrap = MakeGO(name + "_Border", parent);
+        RectTransform wRT = wrap.AddComponent<RectTransform>();
+        wRT.anchorMin = anchorMin;
+        wRT.anchorMax = anchorMax;
+        wRT.pivot = pivot;
+        wRT.anchoredPosition = anchoredPos;
+        wRT.sizeDelta = size;
+        MakeDeco(wrap, border);
+
+        // Botao insetado 1px
+        GameObject btnGO = MakeGO(name, wrap.transform);
+        RectTransform btnRT = btnGO.AddComponent<RectTransform>();
+        btnRT.anchorMin = Vector2.zero;
+        btnRT.anchorMax = Vector2.one;
+        btnRT.pivot = new Vector2(0.5f, 0.5f);
+        btnRT.anchoredPosition = Vector2.zero;
+        btnRT.sizeDelta = new Vector2(-2f, -2f);
+
+        Image img = btnGO.AddComponent<Image>();
+        img.color = bg;
+        img.raycastTarget = true;   // UNICO true
+
+        Button btn = btnGO.AddComponent<Button>();
+        btn.targetGraphic = img;
+        btn.transition = Selectable.Transition.ColorTint;
+        ColorBlock cb = ColorBlock.defaultColorBlock;
+        cb.normalColor = bg;
+        cb.highlightedColor = Color.Lerp(bg, Color.white, 0.22f);
+        cb.pressedColor = Color.Lerp(bg, Color.black, 0.28f);
+        cb.selectedColor = Color.Lerp(bg, Color.white, 0.10f);
+        cb.disabledColor = new Color(bg.r * 0.5f, bg.g * 0.5f, bg.b * 0.5f, 0.6f);
+        cb.fadeDuration = 0.08f;
+        cb.colorMultiplier = 1f;
+        btn.colors = cb;
+
+        // Label filho
+        GameObject lGO = MakeGO("Lbl", btnGO.transform);
+        RectTransform lRT = lGO.AddComponent<RectTransform>();
+        lRT.anchorMin = Vector2.zero;
+        lRT.anchorMax = Vector2.one;
+        lRT.sizeDelta = Vector2.zero;
+        TMP_Text t = lGO.AddComponent<TextMeshProUGUI>();
+        t.text = label;
+        t.fontSize = fs;
+        t.color = tc;
+        t.fontStyle = bold ? FontStyles.Bold : FontStyles.Normal;
+        t.alignment = TextAlignmentOptions.Center;
+        t.raycastTarget = false;   // texto nao bloqueia raycasts
+
+        return btn;
     }
 }
