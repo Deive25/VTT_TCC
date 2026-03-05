@@ -258,6 +258,7 @@ public class DiceRollOverlay : MonoBehaviour
         return y - totalH;
     }
 
+    // BuildDiceCell: todos os filhos sao filhos de bgRT (posicao relativa a celula).
     private void BuildDiceCell(RectTransform parent, int diceIdx,
         float cellX, float cellY, float cellW, float cellH,
         float pad, float gap)
@@ -265,7 +266,7 @@ public class DiceRollOverlay : MonoBehaviour
         int sides = DICE_TYPES[diceIdx];
         Color dc = COL_DICE[diceIdx];
 
-        // Fundo da celula
+        // Fundo da celula (pai de todos os elementos internos)
         GameObject bg = MakeGO("Cell_D" + sides, parent);
         RectTransform bgRT = bg.AddComponent<RectTransform>();
         bgRT.anchorMin = new Vector2(0f, 1f);
@@ -275,7 +276,7 @@ public class DiceRollOverlay : MonoBehaviour
         bgRT.sizeDelta = new Vector2(cellW, -cellH);
         MakeDeco(bg, COL_SEC_BG);
 
-        // Barra de acento colorida na esquerda
+        // Barra de acento colorida na esquerda (filho de bgRT)
         GameObject acc = MakeGO("Acc", bgRT);
         RectTransform accRT = acc.AddComponent<RectTransform>();
         accRT.anchorMin = Vector2.zero;
@@ -285,45 +286,39 @@ public class DiceRollOverlay : MonoBehaviour
         accRT.sizeDelta = new Vector2(3f, 0f);
         MakeDeco(acc, dc);
 
-        // Label do tipo de dado
-        TMP_Text dLabel = MakeLabel("DL_D" + sides, parent);
+        // Label do tipo de dado (filho de bgRT, posicionado relativamente a celula)
+        TMP_Text dLabel = MakeLabel("DL_D" + sides, bgRT);
         RectTransform dlRT = dLabel.GetComponent<RectTransform>();
-        dlRT.anchorMin = new Vector2(0f, 1f);
+        dlRT.anchorMin = new Vector2(0f, 0f);
         dlRT.anchorMax = new Vector2(0f, 1f);
-        dlRT.pivot = new Vector2(0f, 1f);
-        dlRT.anchoredPosition = new Vector2(cellX + 6f, cellY);
-        dlRT.sizeDelta = new Vector2(40f, -cellH);
+        dlRT.pivot = new Vector2(0f, 0.5f);
+        dlRT.anchoredPosition = new Vector2(8f, 0f);
+        dlRT.sizeDelta = new Vector2(42f, 0f);
         dLabel.text = "D" + sides;
         dLabel.fontSize = 10f;
         dLabel.fontStyle = FontStyles.Bold;
         dLabel.color = dc;
         dLabel.alignment = TextAlignmentOptions.MidlineLeft;
 
-        // Controles  (- count +)  alinhados a direita da celula
+        // Controles (- count +): ancorados a direita da celula, centralizados verticalmente
         float btnSz = 22f;
-        float cntW = 28f;
-        float ctrlTot = btnSz + gap + cntW + gap + btnSz;
-        float ctrlStartX = cellX + cellW - ctrlTot - 4f;
-        float btnH = cellH - 6f;
-        float btnY = cellY - (cellH - btnH) * 0.5f;
+        float cntW = 30f;
+        float vPad = 3f;   // padding vertical
+        float btnH = cellH - vPad * 2f;
 
-        int capturedIdx = diceIdx;
+        // Botao mais (mais a direita)
+        Button plusBtn = MakeCellBtn("Plus", bgRT,
+            new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), new Vector2(1f, 0.5f),
+            new Vector2(-4f, 0f), new Vector2(btnSz, btnH),
+            "+", COL_BTN_SEC, COL_BDR_DEF, COL_TEXT, 14f, true);
 
-        // Botao menos
-        MakeBtn("Minus_D" + sides, parent,
-            new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f),
-            new Vector2(ctrlStartX, btnY),
-            new Vector2(btnSz, btnH),
-            "-", COL_BTN_SEC, COL_BDR_DEF, COL_TEXT, 13f, true)
-            .onClick.AddListener(() => ChangeCount(capturedIdx, -1));
-
-        // Contador
-        TMP_Text cntLabel = MakeLabel("Cnt_D" + sides, parent);
+        // Contador (a esquerda do +)
+        TMP_Text cntLabel = MakeLabel("Cnt_D" + sides, bgRT);
         RectTransform cntRT = cntLabel.GetComponent<RectTransform>();
-        cntRT.anchorMin = new Vector2(0f, 1f);
-        cntRT.anchorMax = new Vector2(0f, 1f);
-        cntRT.pivot = new Vector2(0f, 1f);
-        cntRT.anchoredPosition = new Vector2(ctrlStartX + btnSz + gap, btnY);
+        cntRT.anchorMin = new Vector2(1f, 0.5f);
+        cntRT.anchorMax = new Vector2(1f, 0.5f);
+        cntRT.pivot = new Vector2(1f, 0.5f);
+        cntRT.anchoredPosition = new Vector2(-(4f + btnSz + 2f), 0f);
         cntRT.sizeDelta = new Vector2(cntW, -btnH);
         cntLabel.text = "0";
         cntLabel.fontSize = 12f;
@@ -332,13 +327,15 @@ public class DiceRollOverlay : MonoBehaviour
         cntLabel.alignment = TextAlignmentOptions.Center;
         _countLabels[diceIdx] = cntLabel;
 
-        // Botao mais
-        MakeBtn("Plus_D" + sides, parent,
-            new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f),
-            new Vector2(ctrlStartX + btnSz + gap + cntW + gap, btnY),
-            new Vector2(btnSz, btnH),
-            "+", COL_BTN_SEC, COL_BDR_DEF, COL_TEXT, 13f, true)
-            .onClick.AddListener(() => ChangeCount(capturedIdx, +1));
+        // Botao menos (a esquerda do contador)
+        Button minusBtn = MakeCellBtn("Minus", bgRT,
+            new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), new Vector2(1f, 0.5f),
+            new Vector2(-(4f + btnSz + 2f + cntW + 2f), 0f), new Vector2(btnSz, btnH),
+            "-", COL_BTN_SEC, COL_BDR_DEF, COL_TEXT, 14f, true);
+
+        int capturedIdx = diceIdx;
+        minusBtn.onClick.AddListener(() => ChangeCount(capturedIdx, -1));
+        plusBtn.onClick.AddListener(() => ChangeCount(capturedIdx, +1));
     }
 
     // --- Linha de acao (LIMPAR + ROLAR) ----------------------
@@ -628,6 +625,71 @@ public class DiceRollOverlay : MonoBehaviour
         return t;
     }
 
+    // Botao para uso interno nas celulas de dado.
+    // Usa anchorMin/Max/pivot explicitos passados pelo chamador.
+    private Button MakeCellBtn(string name, RectTransform parent,
+        Vector2 anchorMin, Vector2 anchorMax, Vector2 pivot,
+        Vector2 anchoredPos, Vector2 size,
+        string label, Color bg, Color border, Color tc, float fs, bool bold)
+    {
+        // Wrapper borda (decorativo)
+        GameObject wrap = MakeGO(name + "_Border", parent);
+        RectTransform wRT = wrap.AddComponent<RectTransform>();
+        wRT.anchorMin = anchorMin;
+        wRT.anchorMax = anchorMax;
+        wRT.pivot = pivot;
+        wRT.anchoredPosition = anchoredPos;
+        wRT.sizeDelta = size;
+        MakeDeco(wrap, border);
+
+        // Botao interior
+        GameObject btnGO = MakeGO(name, wrap.transform);
+        RectTransform btnRT = btnGO.AddComponent<RectTransform>();
+        btnRT.anchorMin = Vector2.zero;
+        btnRT.anchorMax = Vector2.one;
+        btnRT.pivot = new Vector2(0.5f, 0.5f);
+        btnRT.anchoredPosition = Vector2.zero;
+        btnRT.sizeDelta = Vector2.zero;
+
+        Image img = btnGO.AddComponent<Image>();
+        img.color = bg;
+        img.raycastTarget = true;
+
+        // Outline visivel
+        UnityEngine.UI.Outline ol = btnGO.AddComponent<UnityEngine.UI.Outline>();
+        ol.effectColor = Color.Lerp(bg, Color.white, 0.55f);
+        ol.effectDistance = new Vector2(2f, -2f);
+        ol.useGraphicAlpha = false;
+
+        Button btn = btnGO.AddComponent<Button>();
+        btn.targetGraphic = img;
+        btn.transition = Selectable.Transition.ColorTint;
+        ColorBlock cb = ColorBlock.defaultColorBlock;
+        cb.normalColor = bg;
+        cb.highlightedColor = Color.Lerp(bg, Color.white, 0.30f);
+        cb.pressedColor = Color.Lerp(bg, Color.black, 0.35f);
+        cb.selectedColor = Color.Lerp(bg, Color.white, 0.15f);
+        cb.disabledColor = new Color(bg.r * 0.45f, bg.g * 0.45f, bg.b * 0.45f, 0.5f);
+        cb.fadeDuration = 0.06f;
+        cb.colorMultiplier = 1f;
+        btn.colors = cb;
+
+        GameObject lGO = MakeGO("Lbl", btnGO.transform);
+        RectTransform lRT = lGO.AddComponent<RectTransform>();
+        lRT.anchorMin = Vector2.zero;
+        lRT.anchorMax = Vector2.one;
+        lRT.sizeDelta = Vector2.zero;
+        TMP_Text t = lGO.AddComponent<TextMeshProUGUI>();
+        t.text = label;
+        t.fontSize = fs;
+        t.color = tc;
+        t.fontStyle = bold ? FontStyles.Bold : FontStyles.Normal;
+        t.alignment = TextAlignmentOptions.Center;
+        t.raycastTarget = false;
+
+        return btn;
+    }
+
     /// <summary>
     /// Botao com borda visivel.
     /// Wrapper borda:   Image raycastTarget = false
@@ -662,16 +724,22 @@ public class DiceRollOverlay : MonoBehaviour
         img.color = bg;
         img.raycastTarget = true;   // UNICO true
 
+        // Outline visivel (2px, cor mais clara que o bg)
+        UnityEngine.UI.Outline ol = btnGO.AddComponent<UnityEngine.UI.Outline>();
+        ol.effectColor = Color.Lerp(bg, Color.white, 0.55f);
+        ol.effectDistance = new Vector2(2f, -2f);
+        ol.useGraphicAlpha = false;
+
         Button btn = btnGO.AddComponent<Button>();
         btn.targetGraphic = img;
         btn.transition = Selectable.Transition.ColorTint;
         ColorBlock cb = ColorBlock.defaultColorBlock;
         cb.normalColor = bg;
-        cb.highlightedColor = Color.Lerp(bg, Color.white, 0.22f);
-        cb.pressedColor = Color.Lerp(bg, Color.black, 0.28f);
-        cb.selectedColor = Color.Lerp(bg, Color.white, 0.10f);
-        cb.disabledColor = new Color(bg.r * 0.5f, bg.g * 0.5f, bg.b * 0.5f, 0.6f);
-        cb.fadeDuration = 0.08f;
+        cb.highlightedColor = Color.Lerp(bg, Color.white, 0.30f);
+        cb.pressedColor = Color.Lerp(bg, Color.black, 0.35f);
+        cb.selectedColor = Color.Lerp(bg, Color.white, 0.15f);
+        cb.disabledColor = new Color(bg.r * 0.45f, bg.g * 0.45f, bg.b * 0.45f, 0.5f);
+        cb.fadeDuration = 0.06f;
         cb.colorMultiplier = 1f;
         btn.colors = cb;
 
