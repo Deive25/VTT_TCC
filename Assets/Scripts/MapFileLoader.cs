@@ -1,16 +1,5 @@
 // ============================================================
 // MapFileLoader.cs
-// Responsável por carregar imagens do disco como Texture2D.
-//
-// Suporte a formatos: PNG e JPG/JPEG
-//
-// Estratégia de file picker:
-//   EDITOR:      Usa EditorUtility.OpenFilePanel (nativo Unity)
-//   STANDALONE:  Usa System.Windows.Forms.OpenFileDialog (Windows)
-//               → Para Linux/macOS, veja a nota sobre StandaloneFileBrowser
-//
-// USO:
-//   MapFileLoader.Instance.OpenFilePicker();
 // ============================================================
 using System.Collections;
 using System.IO;
@@ -22,71 +11,35 @@ using System.Threading;
 using System.Windows.Forms;
 #endif
 
-/// <summary>
-/// Singleton que gerencia o processo de seleção e carregamento de mapas.
-/// </summary>
 public class MapFileLoader : MonoBehaviour
 {
-    // --------------------------------------------------------
-    // Singleton
-    // --------------------------------------------------------
     public static MapFileLoader Instance { get; private set; }
+
+    private bool isLoading = false;
+    private System.Action<Texture2D> pendingCallback = null;
 
     private void Awake()
     {
-        if (Instance == null) { Instance = this; }
-        else { Destroy(gameObject); }
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
     }
 
-    // --------------------------------------------------------
-    // Estado
-    // --------------------------------------------------------
-    private bool isLoading = false;
-
-    // --------------------------------------------------------
-    // Ponto de entrada principal
-    // --------------------------------------------------------
-
-    /// <summary>
-    /// Abre o seletor de arquivo.
-    /// No editor usa EditorUtility; em build Windows usa OpenFileDialog.
-    /// Em outros sistemas, utiliza o caminho digitado pelo usuário na UI.
-    /// </summary>
-    public void OpenFilePicker()
+    // Se o callback for nulo, importa como Mapa Base. Se tiver callback, importa como Camada.
+    public void OpenFilePicker(System.Action<Texture2D> onLoaded = null)
     {
-        if (isLoading)
-        {
-            Debug.LogWarning("[MapFileLoader] Já existe um carregamento em progresso.");
-            return;
-        }
+        if (isLoading) return;
+        pendingCallback = onLoaded;
 
 #if UNITY_EDITOR
-        OpenFilePickerEditor();
+        string path = UnityEditor.EditorUtility.OpenFilePanel("Selecionar Imagem", "", "png,jpg,jpeg");
+        if (!string.IsNullOrEmpty(path)) StartCoroutine(LoadTextureRoutine(path));
 #elif UNITY_STANDALONE_WIN
         OpenFilePickerWindows();
 #else
-        Debug.Log("[MapFileLoader] File picker nativo não disponível nesta plataforma. " +
-                  "Use o campo de texto na UI para digitar o caminho do arquivo.");
+        Debug.LogWarning("[MapFileLoader] File picker não disponível nesta plataforma.");
 #endif
     }
 
-    // --------------------------------------------------------
-    // Editor: usa EditorUtility
-    // --------------------------------------------------------
-#if UNITY_EDITOR
-    private void OpenFilePickerEditor()
-    {
-        string path = UnityEditor.EditorUtility.OpenFilePanel(
-            "Selecionar Mapa", "", "png,jpg,jpeg");
-
-        if (!string.IsNullOrEmpty(path))
-            StartCoroutine(LoadTextureFromPath(path));
-    }
-#endif
-
-    // --------------------------------------------------------
-    // Windows Standalone: usa OpenFileDialog em thread separada
-    // --------------------------------------------------------
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
     private string pendingFilePath = null;
     private bool fileDialogCompleted = false;
@@ -94,14 +47,14 @@ public class MapFileLoader : MonoBehaviour
     private void OpenFilePickerWindows()
     {
         fileDialogCompleted = false;
-        pendingFilePath     = null;
+        pendingFilePath = null;
 
         Thread t = new Thread(() =>
         {
             OpenFileDialog dialog = new OpenFileDialog
             {
-                Title  = "Selecionar Mapa",
-                Filter = "Imagens|*.png;*.jpg;*.jpeg|PNG|*.png|JPEG|*.jpg;*.jpeg",
+                Title = "Selecionar Imagem",
+                Filter = "Imagens|*.png;*.jpg;*.jpeg",
                 CheckFileExists = true
             };
 
@@ -111,106 +64,29 @@ public class MapFileLoader : MonoBehaviour
             fileDialogCompleted = true;
         });
 
-        t.SetApartmentState(ApartmentState.STA); // obrigatório para WinForms
+        t.SetApartmentState(ApartmentState.STA);
         t.Start();
-
         StartCoroutine(WaitForWindowsDialog());
     }
 
     private IEnumerator WaitForWindowsDialog()
     {
-        // Aguarda a thread do dialog terminar
-        while (!fileDialogCompleted)
-            yield return null;
-
-        if (!string.IsNullOrEmpty(pendingFilePath))
-            yield return StartCoroutine(LoadTextureFromPath(pendingFilePath));
+        while (!fileDialogCompleted) yield return null;
+        if (!string.IsNullOrEmpty(pendingFilePath)) 
+            yield return StartCoroutine(LoadTextureRoutine(pendingFilePath));
     }
 #endif
 
-    // --------------------------------------------------------
-    // Carregamento por Caminho
-    // --------------------------------------------------------
-
-    /// <summary>
-    /// Carrega uma textura a partir de um caminho de arquivo local.
-    /// Funciona com caminhos absolutos em qualquer plataforma.
-    /// </summary>
-    /// <param name="filePath">Caminho absoluto para a imagem (PNG ou JPG).</param>
-    /// 
-
-    // NOVO: Permite passar um callback específico em vez de disparar o evento global de mapa base
-    private System.Action<Texture2D> currentCallback;
-
-    public void OpenFilePickerWithCallback(System.Action<Texture2D> onSuccess)
+    public void LoadFromPath(string filePath, System.Action<Texture2D> onLoaded = null)
     {
-        if (isLoading) return;
-        currentCallback = onSuccess;
-
-#if UNITY_EDITOR
-        string path = UnityEditor.EditorUtility.OpenFilePanel("Selecionar Imagem", "", "png,jpg,jpeg");
-        if (!string.IsNullOrEmpty(path)) StartCoroutine(LoadTextureRoutine(path));
-#elif UNITY_STANDALONE_WIN
-        OpenFilePickerWindows(true); // Precisaria adaptar o Windows picker para usar callback
-#else
-        Debug.Log("[MapFileLoader] File picker não disponível.");
-#endif
+        if (isLoading || !File.Exists(filePath)) return;
+        pendingCallback = onLoaded;
+        StartCoroutine(LoadTextureRoutine(filePath));
     }
 
     private IEnumerator LoadTextureRoutine(string filePath)
     {
         isLoading = true;
-        string url = "file://" + filePath;
-        using (UnityWebRequest request = UnityWebRequestTexture.GetTexture(url))
-        {
-            yield return request.SendWebRequest();
-            if (request.result == UnityWebRequest.Result.Success)
-            {
-                Texture2D tex = DownloadHandlerTexture.GetContent(request);
-                if (currentCallback != null)
-                {
-                    currentCallback.Invoke(tex);
-                    currentCallback = null;
-                }
-                else
-                {
-                    MapEvents.FireMapLoaded(tex);
-                }
-            }
-        }
-        isLoading = false;
-    }
-
-    public void LoadFromPath(string filePath)
-    {
-        if (isLoading) return;
-
-        if (!File.Exists(filePath))
-        {
-            Debug.LogError($"[MapFileLoader] Arquivo não encontrado: {filePath}");
-            return;
-        }
-
-        string ext = Path.GetExtension(filePath).ToLower();
-        if (ext != ".png" && ext != ".jpg" && ext != ".jpeg")
-        {
-            Debug.LogError($"[MapFileLoader] Formato não suportado: {ext}. Use PNG ou JPG.");
-            return;
-        }
-
-        StartCoroutine(LoadTextureFromPath(filePath));
-    }
-
-    // --------------------------------------------------------
-    // Coroutine de carregamento
-    // --------------------------------------------------------
-
-    private IEnumerator LoadTextureFromPath(string filePath)
-    {
-        isLoading = true;
-        Debug.Log($"[MapFileLoader] Carregando: {filePath}");
-
-        // Adiciona prefixo "file://" para UnityWebRequest
         string url = "file://" + filePath;
 
         using (UnityWebRequest request = UnityWebRequestTexture.GetTexture(url))
@@ -221,25 +97,22 @@ public class MapFileLoader : MonoBehaviour
             {
                 Texture2D texture = DownloadHandlerTexture.GetContent(request);
 
-                if (texture != null)
+                // Redireciona a textura carregada para onde foi pedida
+                if (pendingCallback != null)
                 {
-                    // Dispara o evento central — MapController e outros irão reagir
-                    MapEvents.FireMapLoaded(texture);
-                    Debug.Log($"[MapFileLoader] Mapa carregado com sucesso: {texture.width}x{texture.height}");
+                    pendingCallback.Invoke(texture);
+                    pendingCallback = null;
                 }
                 else
                 {
-                    Debug.LogError("[MapFileLoader] Textura retornada é nula.");
+                    MapEvents.FireMapLoaded(texture);
                 }
             }
             else
             {
-                Debug.LogError($"[MapFileLoader] Erro ao carregar arquivo: {request.error}");
+                Debug.LogError($"[MapFileLoader] Erro ao carregar: {request.error}");
             }
         }
-
         isLoading = false;
     }
-
-
 }

@@ -259,20 +259,14 @@ public class CameraController : MonoBehaviour
     /// </summary>
     private Bounds GetBoardBounds()
     {
-        // 1. Mapa importado
         if (_mapCtrl != null && _mapCtrl.IsMapLoaded)
         {
-            var sr = _mapCtrl.GetComponent<SpriteRenderer>();
-            if (sr != null && sr.sprite != null)
-                return sr.bounds;
+            return _mapCtrl.MapBounds;
         }
 
-        // 2. Board padrão procedimental
         if (_defaultBoard != null)
             return _defaultBoard.GetBoardBounds();
 
-        // 3. Fallback de emergência
-        Debug.LogWarning("[Camera] Board não encontrado. Usando bounds 24×14.");
         return new Bounds(Vector3.zero, new Vector3(24f, 14f, 1f));
     }
 
