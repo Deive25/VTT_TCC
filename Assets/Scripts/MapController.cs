@@ -1,11 +1,12 @@
+// ============================================================
+// MapController.cs
+// Responsável pela coordenação básica de MapInfo.
+// Sem deformações globais de Layer. O Zoom é exclusivo da Câmara.
+// ============================================================
 using UnityEngine;
 
 public class MapController : MonoBehaviour
 {
-    [Header("Configurações de Escala")]
-    [SerializeField] private float minScale = 0.1f;
-    [SerializeField] private float maxScale = 5f;
-
     private float currentScale = 1f;
 
     public SpriteRenderer ActiveRenderer
@@ -23,29 +24,18 @@ public class MapController : MonoBehaviour
 
     public Bounds MapBounds => ActiveRenderer != null ? ActiveRenderer.bounds : new Bounds(Vector3.zero, new Vector3(24f, 14f, 1f));
     public bool IsMapLoaded => ActiveRenderer != null;
-    public float MinScale => minScale;
-    public float MaxScale => maxScale;
     public float CurrentScale => currentScale;
 
     private void OnEnable()
     {
-        MapEvents.OnScaleChangeRequested += HandleScaleChange;
         MapEvents.OnCenterMapRequested += HandleCenterMap;
         MapEvents.OnResetZoomRequested += HandleResetZoom;
     }
 
     private void OnDisable()
     {
-        MapEvents.OnScaleChangeRequested -= HandleScaleChange;
         MapEvents.OnCenterMapRequested -= HandleCenterMap;
         MapEvents.OnResetZoomRequested -= HandleResetZoom;
-    }
-
-    private void HandleScaleChange(float newScale)
-    {
-        currentScale = Mathf.Clamp(newScale, minScale, maxScale);
-        transform.localScale = new Vector3(currentScale, currentScale, 1f);
-        NotifyMapInfoUpdated();
     }
 
     private void HandleCenterMap()
@@ -58,32 +48,9 @@ public class MapController : MonoBehaviour
     private void HandleResetZoom()
     {
         transform.position = Vector3.zero;
-        FitMapToScreen();
+        CameraController cam = FindAnyObjectByType<CameraController>();
+        if (cam != null) cam.FocusOnActiveBoard(); // Câmara assume todo o trabalho
         NotifyMapInfoUpdated();
-    }
-
-    public void FitMapToScreen()
-    {
-        if (!IsMapLoaded) return;
-        Camera cam = Camera.main;
-        if (cam == null) return;
-
-        float screenHeight = cam.orthographicSize * 2f;
-        float screenWidth = screenHeight * cam.aspect;
-
-        Bounds bounds = MapBounds;
-        float spriteHeight = bounds.size.y / currentScale;
-        float spriteWidth = bounds.size.x / currentScale;
-
-        if (spriteWidth == 0 || spriteHeight == 0) return;
-
-        float scaleX = screenWidth / spriteWidth;
-        float scaleY = screenHeight / spriteHeight;
-
-        currentScale = Mathf.Min(scaleX, scaleY) * 0.95f;
-        currentScale = Mathf.Clamp(currentScale, minScale, maxScale);
-
-        transform.localScale = new Vector3(currentScale, currentScale, 1f);
     }
 
     public void NotifyMapInfoUpdated()
@@ -94,7 +61,6 @@ public class MapController : MonoBehaviour
             w = ActiveRenderer.sprite.texture.width;
             h = ActiveRenderer.sprite.texture.height;
         }
-
         MapEvents.FireMapInfoUpdated(new MapInfo { widthPx = w, heightPx = h, scale = currentScale, isLoaded = IsMapLoaded });
     }
 }

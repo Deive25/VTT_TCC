@@ -1,6 +1,3 @@
-// ============================================================
-// GMUIController.cs
-// ============================================================
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
@@ -12,7 +9,7 @@ public class GMUIController : MonoBehaviour
     private CameraController cameraController;
     private FogOfWarController fogController;
     private DiceRollOverlay diceOverlay;
-    private DashboardOverlay dashboardOverlay; // NOVO
+    private DashboardOverlay dashboardOverlay;
 
     private Slider zoomSlider;
     private TMP_Text infoText;
@@ -23,9 +20,11 @@ public class GMUIController : MonoBehaviour
     private Button fogEraseBtn;
     private RectTransform layersContainer;
 
+    // NOVO: Evita conflito constante do valor do slider de zoom
+    private float _lastCamZoom = -1f;
+
     private const float W_RIGHT = 276f;
     private const float W_LEFT = 240f;
-
     private const float PAD = VTTLayout.PAD;
     private const float GAP = VTTLayout.GAP;
     private const float SGAP = VTTLayout.SGAP;
@@ -40,7 +39,7 @@ public class GMUIController : MonoBehaviour
         cameraController = FindAnyObjectByType<CameraController>();
         fogController = FindAnyObjectByType<FogOfWarController>();
         diceOverlay = FindAnyObjectByType<DiceRollOverlay>();
-        dashboardOverlay = FindAnyObjectByType<DashboardOverlay>(); // NOVO
+        dashboardOverlay = FindAnyObjectByType<DashboardOverlay>();
     }
 
     private void Start()
@@ -103,12 +102,10 @@ public class GMUIController : MonoBehaviour
         float y = 0f;
         y = DrawPanelHeader(p, y, "RECURSOS");
 
-        // --- SEÇÃO DASHBOARD/PERSONAGENS (NOVO) ---
         y = DrawSecHeader(p, y, "GERENCIAMENTO");
         VTTLayout.BtnFull(p, y, BH, -PAD * 2f, "ABRIR DASHBOARD", VTTLayout.C_BTN_PRI, VTTLayout.C_BDR_ACC, VTTLayout.C_TEXT, VTTLayout.F_BTN).onClick.AddListener(DoOpenDashboard);
         y -= BH + SGAP;
 
-        // --- SEÇÃO TABULEIROS ---
         y = DrawSecHeader(p, y, "TABULEIROS");
         VTTLayout.BtnFull(p, y, BH, -PAD * 2f, "+ NOVO TABULEIRO", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, VTTLayout.F_BTN, false).onClick.AddListener(DoAddLayer);
         y -= BH + GAP;
@@ -120,12 +117,10 @@ public class GMUIController : MonoBehaviour
         p.sizeDelta = new Vector2(W_LEFT, Mathf.Abs(y) + PAD * 2f);
     }
 
-    // Ação do novo botão
     private void DoOpenDashboard()
     {
         if (dashboardOverlay == null) dashboardOverlay = FindAnyObjectByType<DashboardOverlay>();
         if (dashboardOverlay != null) dashboardOverlay.OpenPanel();
-        else Debug.LogWarning("[GMUIController] DashboardOverlay não encontrado na cena!");
     }
 
     private void DoAddLayer()
@@ -194,13 +189,38 @@ public class GMUIController : MonoBehaviour
         float mn = (cameraController != null) ? cameraController.MinZoom : 0.5f;
         float mx = (cameraController != null) ? cameraController.MaxZoom : 30f;
         float cur = (cameraController != null) ? cameraController.CurrentZoom : 5f;
+
         zoomSlider = VTTLayout.MakeSlider(p, y, 28f, mn, mx, cur);
         zoomSlider.onValueChanged.AddListener(OnZoomChanged);
         y -= 28f + GAP;
+
         float hw = (W_RIGHT - PAD * 2f - GAP) * 0.5f;
         VTTLayout.BtnFixed(p, PAD, y, hw, BH - 4f, "CENTRALIZAR", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, VTTLayout.F_BTN).onClick.AddListener(DoCenterMap);
         VTTLayout.BtnFixed(p, PAD + hw + GAP, y, hw, BH - 4f, "RESET ZOOM", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, VTTLayout.F_BTN).onClick.AddListener(DoResetZoom);
         return y - (BH - 4f) - SGAP;
+    }
+
+    // A mágica que resolve a barra de zoom a tremer está aqui:
+    private void SyncZoom()
+    {
+        if (zoomSlider == null || cameraController == null) return;
+        float camZoom = cameraController.CurrentZoom;
+
+        // Só diz ao slider para se mexer caso o sistema (scroll do rato) tenha alterado a câmara
+        if (Mathf.Abs(camZoom - _lastCamZoom) > 0.001f)
+        {
+            zoomSlider.SetValueWithoutNotify(camZoom);
+            _lastCamZoom = camZoom;
+        }
+    }
+
+    private void OnZoomChanged(float v)
+    {
+        if (cameraController != null)
+        {
+            cameraController.SetZoom(v);
+            _lastCamZoom = v; // Regista que foi o utilizador da UI a mudar o zoom
+        }
     }
 
     private float DrawDiceSection(RectTransform p, float y)
@@ -280,15 +300,13 @@ public class GMUIController : MonoBehaviour
         return y - HH - 1f - GAP;
     }
 
-    private void SyncZoom() { if (zoomSlider != null && cameraController != null) { zoomSlider.minValue = cameraController.MinZoom; zoomSlider.maxValue = cameraController.MaxZoom; zoomSlider.SetValueWithoutNotify(cameraController.CurrentZoom); } }
     private void SyncMouseCoord() { if (coordSystem != null && infoText != null && mapController != null && mapController.IsMapLoaded) RefreshInfo(new MapInfo { scale = mapController.CurrentScale, mouseNormalized = coordSystem.GetMouseNormalized(), isLoaded = true }); }
     private void SyncFogState() { if (fogController == null || fogStatusText == null) return; bool active = fogController.IsActive; bool isPaint = fogController.CurrentMode == FogOfWarController.FogMode.Paint; if (!active) { fogStatusText.text = "Ferramenta inativa"; fogStatusText.color = VTTLayout.C_TEXT_DIM; } else if (isPaint) { fogStatusText.text = "Modo pintura ativo"; fogStatusText.color = VTTLayout.RGB(0.30f, 0.60f, 0.90f); } else { fogStatusText.text = "Modo apagar ativo"; fogStatusText.color = VTTLayout.RGB(0.85f, 0.40f, 0.35f); } VTTLayout.SetBtnColor(fogPaintBtn, (active && isPaint) ? VTTLayout.C_BTN_ACTIVE : VTTLayout.C_BTN_PAINT); VTTLayout.SetBtnColor(fogEraseBtn, (active && !isPaint) ? VTTLayout.C_BTN_ACTIVE : VTTLayout.C_BTN_ERASE); }
     private void OnMapInfo(MapInfo info) { if (infoText != null && info.isLoaded) RefreshInfo(info); }
-    private void RefreshInfo(MapInfo info) { if (infoText == null) return; string cursor = info.mouseNormalized.HasValue ? info.mouseNormalized.Value.x.ToString("F3") + "  " + info.mouseNormalized.Value.y.ToString("F3") : "fora do mapa"; float zoom = (cameraController != null) ? cameraController.CurrentZoom : 0f; string fogSt = (fogController != null && fogController.IsActive) ? "Ativa" : "Inativa"; infoText.text = "Escala    " + info.scale.ToString("F3") + "\nZoom      " + zoom.ToString("F2") + "\nCursor    " + cursor + "\nNevoa     " + fogSt; }
-    private string DefaultInfo() { return "Escala    --\nZoom      --\nCursor    --\nNevoa     Inativa"; }
+    private void RefreshInfo(MapInfo info) { if (infoText == null) return; string cursor = info.mouseNormalized.HasValue ? info.mouseNormalized.Value.x.ToString("F3") + "  " + info.mouseNormalized.Value.y.ToString("F3") : "fora do mapa"; float zoom = (cameraController != null) ? cameraController.CurrentZoom : 0f; string fogSt = (fogController != null && fogController.IsActive) ? "Ativa" : "Inativa"; infoText.text = "Acesso    OK" + "\nZoom      " + zoom.ToString("F2") + "\nCursor    " + cursor + "\nNevoa     " + fogSt; }
+    private string DefaultInfo() { return "Acesso    --\nZoom      --\nCursor    --\nNevoa     Inativa"; }
     private void RefreshHistory() { if (historyText == null || diceOverlay == null) return; var h = diceOverlay.History; if (h.Count == 0) { historyText.text = "Nenhuma rolagem ainda"; return; } System.Text.StringBuilder sb = new System.Text.StringBuilder(); int n = Mathf.Min(h.Count, 4); for (int i = 0; i < n; i++) { sb.Append(h[i].descriptor + "  =>  " + h[i].total); if (i < n - 1) sb.Append("\n"); } historyText.text = sb.ToString(); }
     private void RefreshBrushLabel() { if (brushSizeText != null && fogController != null) brushSizeText.text = fogController.BrushRadius.ToString(); }
-    private void OnZoomChanged(float v) { if (cameraController != null) cameraController.SetZoom(v); }
     private void DoCenterMap() { MapEvents.FireCenterMapRequested(); }
     private void DoResetZoom() { MapEvents.FireResetZoomRequested(); if (cameraController != null) cameraController.FocusOnActiveBoard(); }
     private void DoOpenDice() { if (diceOverlay == null) diceOverlay = FindAnyObjectByType<DiceRollOverlay>(); if (diceOverlay != null) diceOverlay.OpenPanel(); }

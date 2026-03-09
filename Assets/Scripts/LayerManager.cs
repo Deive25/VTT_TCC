@@ -1,6 +1,7 @@
 // ============================================================
 // LayerManager.cs (Atuando como Board Manager)
 // ============================================================
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -10,7 +11,6 @@ public class LayerData
     public string name;
     public GameObject gameObject;
     public SpriteRenderer renderer;
-
     public Texture2D fogTex;
     public Color32[] fogPixels;
     public SpriteRenderer fogRenderer;
@@ -61,6 +61,7 @@ public class LayerManager : MonoBehaviour
         else go.transform.SetParent(this.transform, false);
 
         go.transform.localPosition = Vector3.zero;
+        go.transform.localScale = Vector3.one; // Trava a escala nativa do Sprite
 
         SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
         sr.sprite = Sprite.Create(texture, new Rect(0, 0, texture.width, texture.height), new Vector2(0.5f, 0.5f), 100f);
@@ -90,10 +91,7 @@ public class LayerManager : MonoBehaviour
             if (ActiveLayerId == id)
             {
                 ActiveLayerId = null;
-                if (_layers.Count > 0)
-                {
-                    SetActiveLayer(_layers[0].id);
-                }
+                if (_layers.Count > 0) SetActiveLayer(_layers[0].id);
                 else
                 {
                     DefaultBoardRenderer defaultBoard = FindAnyObjectByType<DefaultBoardRenderer>();
@@ -107,16 +105,10 @@ public class LayerManager : MonoBehaviour
         }
     }
 
-    // --- NOVO: Função para Renomear ---
     public void RenameLayer(string id, string newName)
     {
         LayerData layer = _layers.Find(l => l.id == id);
-        if (layer != null && !string.IsNullOrWhiteSpace(newName))
-        {
-            layer.name = newName;
-            // O nome é atualizado no banco de dados. 
-            // O próprio input field da UI já vai mostrar o nome novo automaticamente.
-        }
+        if (layer != null && !string.IsNullOrWhiteSpace(newName)) layer.name = newName;
     }
 
     public void MoveLayerUp(string id)
@@ -148,12 +140,15 @@ public class LayerManager : MonoBehaviour
         MapEvents.FireLayersChanged();
 
         MapController mc = FindAnyObjectByType<MapController>();
-        if (mc != null)
-        {
-            mc.FitMapToScreen();
-            mc.NotifyMapInfoUpdated();
-        }
+        if (mc != null) mc.NotifyMapInfoUpdated();
 
+        // Aguarda 1 frame para garantir que o objeto ativou e os tamanhos estão prontos
+        StartCoroutine(FocusCameraNextFrame());
+    }
+
+    private IEnumerator FocusCameraNextFrame()
+    {
+        yield return null;
         CameraController camCtrl = FindAnyObjectByType<CameraController>();
         if (camCtrl != null) camCtrl.FocusOnActiveBoard();
     }

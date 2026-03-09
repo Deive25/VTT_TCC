@@ -1,8 +1,9 @@
 // ============================================================
-// VTTLayout.cs  v5
+// VTTLayout.cs
 // ============================================================
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.EventSystems;
 using TMPro;
 
 public static class VTTLayout
@@ -55,9 +56,9 @@ public static class VTTLayout
     public static readonly Color C_TEXT_GOLD = RGB(0.92f, 0.78f, 0.28f);
 
     public static Color RGB(float r, float g, float b, float a = 1f) => new Color(r, g, b, a);
-    public static Color Highlight(Color c) => Color.Lerp(c, Color.white, 0.22f);
-    public static Color Pressed(Color c) => Color.Lerp(c, Color.black, 0.28f);
-    public static Color Selected(Color c) => Color.Lerp(c, Color.white, 0.10f);
+    public static Color Highlight(Color c) => Color.Lerp(c, Color.white, 0.15f);
+    public static Color Pressed(Color c) => Color.Lerp(c, Color.black, 0.35f);
+    public static Color Selected(Color c) => Color.Lerp(c, Color.white, 0.05f);
     public static Color Disabled(Color c) => new Color(c.r * 0.5f, c.g * 0.5f, c.b * 0.5f, 0.6f);
 
     public static RectTransform Panel(string name, Transform parent, Vector2 anchorMin, Vector2 anchorMax, Vector2 pivot, float width, Color bgColor)
@@ -69,10 +70,7 @@ public static class VTTLayout
         return rt;
     }
 
-    public static RectTransform Panel(string name, Transform parent, Vector2 anchorMin, Vector2 anchorMax, Vector2 pivot, float width)
-    {
-        return Panel(name, parent, anchorMin, anchorMax, pivot, width, C_BG);
-    }
+    public static RectTransform Panel(string name, Transform parent, Vector2 anchorMin, Vector2 anchorMax, Vector2 pivot, float width) => Panel(name, parent, anchorMin, anchorMax, pivot, width, C_BG);
 
     public static RectTransform Box(string name, RectTransform parent, float x, float y, float dw, float dh, Color color, Vector2 anchorMin, Vector2 anchorMax)
     {
@@ -82,10 +80,7 @@ public static class VTTLayout
         Deco(go, color); return rt;
     }
 
-    public static RectTransform Box(string name, RectTransform parent, float x, float y, float dw, float dh, Color color)
-    {
-        return Box(name, parent, x, y, dw, dh, color, new Vector2(0f, 1f), new Vector2(1f, 1f));
-    }
+    public static RectTransform Box(string name, RectTransform parent, float x, float y, float dw, float dh, Color color) => Box(name, parent, x, y, dw, dh, color, new Vector2(0f, 1f), new Vector2(1f, 1f));
 
     public static void AccentBar(RectTransform parent, float width, Color color)
     {
@@ -119,7 +114,6 @@ public static class VTTLayout
         return TxtNode(go, fontSize, color, style, align);
     }
 
-    // --- NOVO: CAMPO DE TEXTO EDITÁVEL VISUAL E COMPLETO ---
     public static TMP_InputField InputFieldFixed(RectTransform parent, float x, float y, float w, float h, float fontSize, Color textColor, FontStyles style, string defaultText)
     {
         GameObject go = New("InputField", parent);
@@ -127,57 +121,37 @@ public static class VTTLayout
         rt.anchorMin = new Vector2(0, 1); rt.anchorMax = new Vector2(0, 1); rt.pivot = new Vector2(0, 1);
         rt.anchoredPosition = new Vector2(x, y); rt.sizeDelta = new Vector2(w, h);
 
-        // Imagem de fundo base (Precisa ser branca para o ColorBlock funcionar pintando ela)
         Image bg = go.AddComponent<Image>();
         bg.color = Color.white;
 
         TMP_InputField input = go.AddComponent<TMP_InputField>();
         input.targetGraphic = bg;
 
-        // Viewport: Impede que o texto vaze para fora da caixa e serve de âncora para o cursor
         GameObject vpGO = New("Viewport", go.transform);
         RectTransform vpRT = vpGO.AddComponent<RectTransform>();
         vpRT.anchorMin = Vector2.zero; vpRT.anchorMax = Vector2.one;
-        vpRT.offsetMin = new Vector2(6f, 2f); // Padding interno esquerdo/baixo
-        vpRT.offsetMax = new Vector2(-6f, -2f); // Padding interno direito/cima
+        vpRT.offsetMin = new Vector2(6f, 2f);
+        vpRT.offsetMax = new Vector2(-6f, -2f);
         vpGO.AddComponent<RectMask2D>();
 
-        // Objeto de Texto em si
         GameObject textGO = New("Text", vpGO.transform);
         RectTransform textRT = textGO.AddComponent<RectTransform>();
         textRT.anchorMin = Vector2.zero; textRT.anchorMax = Vector2.one;
         textRT.sizeDelta = Vector2.zero; textRT.anchoredPosition = Vector2.zero;
 
         TMP_Text textComp = textGO.AddComponent<TextMeshProUGUI>();
-        textComp.fontSize = fontSize;
-        textComp.color = textColor;
-        textComp.fontStyle = style;
-        textComp.alignment = TextAlignmentOptions.MidlineLeft;
-        textComp.enableWordWrapping = false;
-        textComp.extraPadding = true;
+        textComp.fontSize = fontSize; textComp.color = textColor; textComp.fontStyle = style;
+        textComp.alignment = TextAlignmentOptions.MidlineLeft; textComp.enableWordWrapping = false; textComp.extraPadding = true;
 
-        input.textViewport = vpRT;
-        input.textComponent = textComp;
-        input.text = defaultText;
+        input.textViewport = vpRT; input.textComponent = textComp; input.text = defaultText;
+        input.customCaretColor = true; input.caretColor = textColor; input.caretWidth = 2; input.caretBlinkRate = 0.85f;
 
-        // --- MÁGICA DO CURSOR (O Tracinho) ---
-        input.customCaretColor = true;
-        input.caretColor = textColor; // Cursor pisca na mesma cor do texto
-        input.caretWidth = 2; // Cursor levemente mais grosso (melhor visibilidade)
-        input.caretBlinkRate = 0.85f;
-
-        // --- MÁGICA DO FUNDO E FEEDBACK VISUAL ---
         ColorBlock cb = input.colors;
-        // Fundo padrão: Levemente escurecido para o usuário SABER que é uma caixa de texto
         cb.normalColor = new Color(0f, 0f, 0f, 0.2f);
-        // Passar o mouse: Clareia de leve
         cb.highlightedColor = new Color(1f, 1f, 1f, 0.05f);
         cb.pressedColor = new Color(0f, 0f, 0f, 0.4f);
-        // Quando está digitando: Fica bem escuro para o texto branco saltar aos olhos
         cb.selectedColor = new Color(0f, 0f, 0f, 0.5f);
         input.colors = cb;
-
-        // Cor de quando você seleciona o texto clicando e arrastando
         input.selectionColor = new Color(0.24f, 0.42f, 0.65f, 0.6f);
 
         return input;
@@ -205,8 +179,12 @@ public static class VTTLayout
         RectTransform rt = go.AddComponent<RectTransform>();
         rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.pivot = new Vector2(0.5f, 0.5f); rt.anchoredPosition = Vector2.zero; rt.sizeDelta = new Vector2(-2f, -2f);
         Image img = go.AddComponent<Image>(); img.color = bg; img.raycastTarget = true;
+
         Button btn = go.AddComponent<Button>(); btn.targetGraphic = img; btn.transition = Selectable.Transition.ColorTint;
         ColorBlock cb = ColorBlock.defaultColorBlock; cb.normalColor = bg; cb.highlightedColor = Highlight(bg); cb.pressedColor = Pressed(bg); cb.selectedColor = Selected(bg); cb.disabledColor = Disabled(bg); cb.fadeDuration = 0.08f; cb.colorMultiplier = 1f; btn.colors = cb;
+
+        go.AddComponent<ButtonFeedback>();
+
         GameObject lgo = New("Lbl", go.transform);
         RectTransform lrt = lgo.AddComponent<RectTransform>();
         lrt.anchorMin = Vector2.zero; lrt.anchorMax = Vector2.one; lrt.sizeDelta = Vector2.zero;
@@ -281,8 +259,76 @@ public static class VTTLayout
         return scroll;
     }
 
+    // --- NOVO: GERADOR DE CÍRCULOS (MÁSCARA PARA AVATARES) ---
+    private static Sprite _circleSprite;
+    public static Sprite GetCircleSprite()
+    {
+        if (_circleSprite == null)
+        {
+            int r = 128, d = 256;
+            Texture2D tex = new Texture2D(d, d, TextureFormat.RGBA32, false);
+            Color32[] p = new Color32[d * d];
+            Color32 clear = new Color32(0, 0, 0, 0);
+            Color32 white = new Color32(255, 255, 255, 255);
+            for (int y = 0; y < d; y++)
+            {
+                for (int x = 0; x < d; x++)
+                {
+                    int dx = x - r, dy = y - r;
+                    p[y * d + x] = (dx * dx + dy * dy <= r * r) ? white : clear;
+                }
+            }
+            tex.SetPixels32(p); tex.Apply();
+            _circleSprite = Sprite.Create(tex, new Rect(0, 0, d, d), new Vector2(0.5f, 0.5f), 100f);
+        }
+        return _circleSprite;
+    }
+
+    // --- NOVO: AVATAR MASCARADO ---
+    public static Image MakeMaskedAvatar(RectTransform parent, Vector2 anchoredPos, Vector2 size, Color bgColor)
+    {
+        GameObject maskGO = New("AvatarMask", parent);
+        RectTransform maskRT = maskGO.AddComponent<RectTransform>();
+        maskRT.anchorMin = new Vector2(0, 0.5f); maskRT.anchorMax = new Vector2(0, 0.5f);
+        maskRT.pivot = new Vector2(0, 0.5f);
+        maskRT.anchoredPosition = anchoredPos; maskRT.sizeDelta = size;
+
+        Image maskImg = maskGO.AddComponent<Image>();
+        maskImg.sprite = GetCircleSprite(); // Usa o círculo perfeito gerado via código!
+        maskImg.color = bgColor;
+        Mask mask = maskGO.AddComponent<Mask>();
+        mask.showMaskGraphic = true;
+
+        GameObject avGO = New("AvatarImg", maskGO.transform);
+        RectTransform avRT = avGO.AddComponent<RectTransform>();
+        avRT.anchorMin = Vector2.zero; avRT.anchorMax = Vector2.one;
+        avRT.sizeDelta = Vector2.zero;
+
+        Image avImg = avGO.AddComponent<Image>();
+        avImg.color = Color.clear; // Começa invisível
+        return avImg;
+    }
+
     public static GameObject New(string name, Transform parent) { var go = new GameObject(name); go.transform.SetParent(parent, false); return go; }
     public static void Deco(GameObject go, Color color) { Image img = go.AddComponent<Image>(); img.color = color; img.raycastTarget = false; }
     public static void Deco(RectTransform rt, Color color) { Deco(rt.gameObject, color); }
     private static TMP_Text TxtNode(GameObject go, float fontSize, Color color, FontStyles style, TextAlignmentOptions align) { TMP_Text t = go.AddComponent<TextMeshProUGUI>(); t.fontSize = fontSize; t.color = color; t.fontStyle = style; t.alignment = align; t.raycastTarget = false; return t; }
+}
+
+public class ButtonFeedback : MonoBehaviour, IPointerDownHandler, IPointerUpHandler, IPointerEnterHandler, IPointerExitHandler
+{
+    private Vector3 originalScale;
+    private RectTransform rt;
+
+    void Awake()
+    {
+        rt = GetComponent<RectTransform>();
+        originalScale = rt.localScale;
+    }
+
+    public void OnPointerEnter(PointerEventData eventData) => rt.localScale = originalScale * 1.02f;
+    public void OnPointerExit(PointerEventData eventData) => rt.localScale = originalScale;
+    public void OnPointerDown(PointerEventData eventData) => rt.localScale = originalScale * 0.94f;
+    public void OnPointerUp(PointerEventData eventData) => rt.localScale = originalScale * (eventData.pointerEnter == gameObject ? 1.02f : 1f);
+    void OnDisable() { if (rt != null) rt.localScale = originalScale; }
 }
