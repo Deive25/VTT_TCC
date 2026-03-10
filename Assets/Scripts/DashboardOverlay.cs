@@ -287,10 +287,103 @@ public class DashboardOverlay : MonoBehaviour
     {
         _mainScreen.SetActive(true);
         _mainScreen.transform.SetAsLastSibling();
+        RefreshDashboard(); // NOVO: Carrega os dados gravados ao abrir
     }
 
     public void ClosePanel()
     {
         _mainScreen.SetActive(false);
+    }
+
+    // --- NOVA FUNÇÃO: Sincroniza a tela com o Banco de Dados Local ---
+    public void RefreshDashboard()
+    {
+        if (_gridRT == null || CharacterManager.Instance == null) return;
+
+        // 1. Limpa os cartões antigos da tela (exceto o botão de +)
+        foreach (Transform child in _gridRT)
+        {
+            if (child.name != "Card_Add") Destroy(child.gameObject);
+        }
+
+        // 2. Lê a base de dados e recria as fichas
+        foreach (var record in CharacterManager.Instance.Database.records)
+        {
+            Texture2D tex = CharacterManager.Instance.LoadAvatar(record.avatarFileName);
+            BuildCharacterCard(_gridRT, record, tex);
+        }
+
+        // 3. Garante que o botão de adicionar (+) fica sempre no final da lista
+        Transform addBtn = _gridRT.Find("Card_Add");
+        if (addBtn != null) addBtn.SetAsLastSibling();
+
+        LayoutRebuilder.ForceRebuildLayoutImmediate(_contentRT);
+    }
+
+    // Cole isto no seu ficheiro DashboardOverlay.cs substituindo a função original!
+
+    private void BuildCharacterCard(RectTransform parent, CharacterRecord record, Texture2D avatarTex)
+    {
+        GameObject card = VTTLayout.New("Card_" + record.id, parent);
+        RectTransform cardRT = card.AddComponent<RectTransform>();
+        Image bg = card.AddComponent<Image>();
+        bg.color = VTTLayout.C_SEC_BG;
+
+        Color barColor = record.system == "D&D 5e" ? VTTLayout.C_TEXT_GOLD : new Color(0.85f, 0.25f, 0.25f, 1f);
+        VTTLayout.AccentBar(cardRT, 4f, barColor);
+
+        Image avImg = VTTLayout.MakeMaskedAvatar(cardRT, new Vector2(20f, 0f), new Vector2(90f, 90f), VTTLayout.C_CONTENT_BG);
+        if (avatarTex != null)
+        {
+            avImg.sprite = Sprite.Create(avatarTex, new Rect(0, 0, avatarTex.width, avatarTex.height), new Vector2(0.5f, 0.5f));
+            avImg.color = Color.white;
+        }
+
+        float textX = 130f;
+
+        TMP_Text nameTxt = MakeText(cardRT, record.name, 20f, VTTLayout.C_TEXT_PANEL, FontStyles.Bold, TextAlignmentOptions.BottomLeft);
+        nameTxt.rectTransform.anchorMin = new Vector2(0, 1); nameTxt.rectTransform.anchorMax = new Vector2(1, 1);
+        nameTxt.rectTransform.pivot = new Vector2(0, 1);
+        nameTxt.rectTransform.anchoredPosition = new Vector2(textX, -20f);
+        nameTxt.rectTransform.sizeDelta = new Vector2(-140f, 30f);
+
+        TMP_Text lvlTxt = MakeText(cardRT, record.subText, 13f, VTTLayout.C_TEXT_DIM, FontStyles.Normal, TextAlignmentOptions.TopLeft);
+        lvlTxt.rectTransform.anchorMin = new Vector2(0, 1); lvlTxt.rectTransform.anchorMax = new Vector2(1, 1);
+        lvlTxt.rectTransform.pivot = new Vector2(0, 1);
+        lvlTxt.rectTransform.anchoredPosition = new Vector2(textX, -50f);
+        lvlTxt.rectTransform.sizeDelta = new Vector2(-140f, 20f);
+
+        TMP_Text statsTxt = MakeText(cardRT, record.statsStr, 12f, VTTLayout.C_TEXT, FontStyles.Bold, TextAlignmentOptions.TopLeft);
+        statsTxt.rectTransform.anchorMin = new Vector2(0, 1); statsTxt.rectTransform.anchorMax = new Vector2(1, 1);
+        statsTxt.rectTransform.pivot = new Vector2(0, 1);
+        statsTxt.rectTransform.anchoredPosition = new Vector2(textX, -85f);
+        statsTxt.rectTransform.sizeDelta = new Vector2(-140f, 20f);
+
+        // --- BOTAO EDITAR AGORA ABRE A FICHA ---
+        Button btnEdit = MakeButton(cardRT, "E", VTTLayout.C_BTN_SEC, VTTLayout.C_TEXT, 14f, true);
+        RectTransform editRT = btnEdit.GetComponent<RectTransform>();
+        editRT.anchorMin = new Vector2(1, 1); editRT.anchorMax = new Vector2(1, 1);
+        editRT.pivot = new Vector2(1, 1);
+        editRT.anchoredPosition = new Vector2(-10f, -10f);
+        editRT.sizeDelta = new Vector2(30f, 30f);
+
+        CharacterRecord targetRecord = record; // Captura para o clique
+        btnEdit.onClick.AddListener(() => {
+            CharacterCreatorScreen.Instance.OpenForEdit(targetRecord);
+        });
+
+        // --- BOTAO DELETAR ---
+        Button btnDel = MakeButton(cardRT, "X", VTTLayout.C_BTN_CLOSE, VTTLayout.C_TEXT, 14f, true);
+        RectTransform delRT = btnDel.GetComponent<RectTransform>();
+        delRT.anchorMin = new Vector2(1, 0); delRT.anchorMax = new Vector2(1, 0);
+        delRT.pivot = new Vector2(1, 0);
+        delRT.anchoredPosition = new Vector2(-10f, 10f);
+        delRT.sizeDelta = new Vector2(30f, 30f);
+
+        string targetId = record.id;
+        btnDel.onClick.AddListener(() => {
+            CharacterManager.Instance.DeleteCharacter(targetId);
+            RefreshDashboard();
+        });
     }
 }

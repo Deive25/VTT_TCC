@@ -130,8 +130,8 @@ public static class VTTLayout
         GameObject vpGO = New("Viewport", go.transform);
         RectTransform vpRT = vpGO.AddComponent<RectTransform>();
         vpRT.anchorMin = Vector2.zero; vpRT.anchorMax = Vector2.one;
-        vpRT.offsetMin = new Vector2(6f, 2f);
-        vpRT.offsetMax = new Vector2(-6f, -2f);
+        vpRT.offsetMin = new Vector2(8f, 4f);
+        vpRT.offsetMax = new Vector2(-8f, -4f);
         vpGO.AddComponent<RectMask2D>();
 
         GameObject textGO = New("Text", vpGO.transform);
@@ -147,13 +147,23 @@ public static class VTTLayout
         input.customCaretColor = true; input.caretColor = textColor; input.caretWidth = 2; input.caretBlinkRate = 0.85f;
 
         ColorBlock cb = input.colors;
-        cb.normalColor = new Color(0f, 0f, 0f, 0.2f);
-        cb.highlightedColor = new Color(1f, 1f, 1f, 0.05f);
+        cb.normalColor = new Color(0f, 0f, 0f, 0.25f);
+        cb.highlightedColor = new Color(1f, 1f, 1f, 0.08f);
         cb.pressedColor = new Color(0f, 0f, 0f, 0.4f);
-        cb.selectedColor = new Color(0f, 0f, 0f, 0.5f);
+        cb.selectedColor = new Color(0f, 0f, 0f, 0.6f);
         input.colors = cb;
         input.selectionColor = new Color(0.24f, 0.42f, 0.65f, 0.6f);
 
+        return input;
+    }
+
+    // --- NOVO: InputField Multiline (Para Inventário, História e Habilidades) ---
+    public static TMP_InputField InputFieldMultiline(RectTransform parent, float x, float y, float w, float h, float fontSize, Color textColor, FontStyles style, string defaultText)
+    {
+        TMP_InputField input = InputFieldFixed(parent, x, y, w, h, fontSize, textColor, style, defaultText);
+        input.lineType = TMP_InputField.LineType.MultiLineNewline;
+        input.textComponent.alignment = TextAlignmentOptions.TopLeft;
+        input.textComponent.enableWordWrapping = true;
         return input;
     }
 
@@ -239,7 +249,7 @@ public static class VTTLayout
         svRT.anchoredPosition = new Vector2(x, y); svRT.sizeDelta = new Vector2(w, h);
 
         ScrollRect scroll = svGO.AddComponent<ScrollRect>();
-        scroll.horizontal = false; scroll.vertical = true; scroll.scrollSensitivity = 25f;
+        scroll.horizontal = false; scroll.vertical = true; scroll.scrollSensitivity = 35f;
 
         GameObject vpGO = New("Viewport", svGO.transform);
         RectTransform vpRT = vpGO.AddComponent<RectTransform>();
@@ -259,7 +269,6 @@ public static class VTTLayout
         return scroll;
     }
 
-    // --- NOVO: GERADOR DE CÍRCULOS (MÁSCARA PARA AVATARES) ---
     private static Sprite _circleSprite;
     public static Sprite GetCircleSprite()
     {
@@ -284,7 +293,6 @@ public static class VTTLayout
         return _circleSprite;
     }
 
-    // --- NOVO: AVATAR MASCARADO ---
     public static Image MakeMaskedAvatar(RectTransform parent, Vector2 anchoredPos, Vector2 size, Color bgColor)
     {
         GameObject maskGO = New("AvatarMask", parent);
@@ -294,7 +302,7 @@ public static class VTTLayout
         maskRT.anchoredPosition = anchoredPos; maskRT.sizeDelta = size;
 
         Image maskImg = maskGO.AddComponent<Image>();
-        maskImg.sprite = GetCircleSprite(); // Usa o círculo perfeito gerado via código!
+        maskImg.sprite = GetCircleSprite();
         maskImg.color = bgColor;
         Mask mask = maskGO.AddComponent<Mask>();
         mask.showMaskGraphic = true;
@@ -305,7 +313,7 @@ public static class VTTLayout
         avRT.sizeDelta = Vector2.zero;
 
         Image avImg = avGO.AddComponent<Image>();
-        avImg.color = Color.clear; // Começa invisível
+        avImg.color = Color.clear;
         return avImg;
     }
 
