@@ -1,6 +1,7 @@
 // ============================================================
 // FogOfWarController.cs  v5
 // Agora gerencia a pintura nas texturas individuais de cada tabuleiro.
+// Com integração direta para os Tokens (RevealByToken).
 // ============================================================
 using System.Collections;
 using UnityEngine;
@@ -67,15 +68,7 @@ public class FogOfWarController : MonoBehaviour
 
     private void Update()
     {
-        if (!IsActive) return;
-        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
-
-        if (Input.GetMouseButton(0))
-        {
-            PaintAt(Input.mousePosition);
-        }
-
-        // Se a névoa do tabuleiro ativo foi alterada neste frame, aplicamos na placa de video
+        // 1. Aplica as mudanças da névoa na Placa Gráfica SEMPRE (Vital para os Tokens funcionarem sozinhos)
         if (LayerManager.Instance != null)
         {
             LayerData activeBoard = LayerManager.Instance.GetActiveLayer();
@@ -85,6 +78,17 @@ public class FogOfWarController : MonoBehaviour
                 activeBoard.fogTex.Apply();
                 activeBoard.fogDirty = false;
             }
+        }
+
+        // 2. Daqui para baixo, é o Pincel do Mestre. Se a ferramenta estiver desligada, pára aqui.
+        if (!IsActive) return;
+
+        // Impede que o mestre pinte a névoa sem querer enquanto clica em botões da Interface
+        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
+
+        if (Input.GetMouseButton(0))
+        {
+            PaintAt(Input.mousePosition);
         }
     }
 
@@ -115,6 +119,53 @@ public class FogOfWarController : MonoBehaviour
                 if (dx * dx + dy * dy <= r2)
                     board.fogPixels[py * board.fogTex.width + px] = fill;
             }
+        board.fogDirty = true;
+    }
+
+    // =====================================================================
+    // NOVA FUNÇÃO EXCLUSIVA PARA OS TOKENS: Apaga a névoa à sua volta
+    // =====================================================================
+    public void RevealByToken(Vector3 worldPos, float radiusInWorldUnits)
+    {
+        if (LayerManager.Instance == null) return;
+        LayerData board = LayerManager.Instance.GetActiveLayer();
+        if (board == null || board.fogTex == null) return;
+
+        Bounds b = board.renderer.bounds;
+
+        // Transforma a posição do mundo em posição UV (0 a 1) na textura
+        float u = (worldPos.x - b.min.x) / b.size.x;
+        float v = (worldPos.y - b.min.y) / b.size.y;
+
+        // Ignora se o token estiver extremamente fora do mapa
+        if (u < -0.5f || u > 1.5f || v < -0.5f || v > 1.5f) return;
+
+        // Encontra o centro exato em pixeis na textura
+        int cx = Mathf.Clamp(Mathf.RoundToInt(u * board.fogTex.width), 0, board.fogTex.width - 1);
+        int cy = Mathf.Clamp(Mathf.RoundToInt(v * board.fogTex.height), 0, board.fogTex.height - 1);
+
+        // A cor de limpar a névoa (Transparente)
+        Color32 clearColor = new Color32(0, 0, 0, 0);
+
+        // Converte o raio de escala do Token para pixeis da Textura
+        float pixelsPerUnit = board.fogTex.width / b.size.x;
+        int r = Mathf.RoundToInt(radiusInWorldUnits * pixelsPerUnit);
+        int r2 = r * r;
+
+        // Limpa os pixeis em formato de círculo
+        for (int py = Mathf.Max(0, cy - r); py <= Mathf.Min(board.fogTex.height - 1, cy + r); py++)
+        {
+            for (int px = Mathf.Max(0, cx - r); px <= Mathf.Min(board.fogTex.width - 1, cx + r); px++)
+            {
+                int dx = px - cx, dy = py - cy;
+                if (dx * dx + dy * dy <= r2)
+                {
+                    board.fogPixels[py * board.fogTex.width + px] = clearColor;
+                }
+            }
+        }
+
+        // Avisa a placa gráfica que a textura sofreu alterações
         board.fogDirty = true;
     }
 

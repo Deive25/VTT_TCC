@@ -317,11 +317,46 @@ public static class VTTLayout
         return avImg;
     }
 
+    // --- NOVO: Cria um Token circular 2D para o mapa! ---
+    // --- ATUALIZADO: Normaliza qualquer resolução para caber dentro da Borda! ---
+    public static Sprite CreateCircularWorldSprite(Texture2D sourceTex)
+    {
+        if (sourceTex == null) return GetCircleSprite();
+        int w = sourceTex.width; int h = sourceTex.height;
+        int d = Mathf.Min(w, h);
+        int r = d / 2;
+        int offsetX = (w - d) / 2; int offsetY = (h - d) / 2;
+
+        Texture2D tex = new Texture2D(d, d, TextureFormat.RGBA32, false);
+        Color[] sourcePixels = sourceTex.GetPixels(offsetX, offsetY, d, d);
+        Color[] finalPixels = new Color[d * d];
+        Color clear = new Color(0, 0, 0, 0);
+
+        for (int y = 0; y < d; y++)
+        {
+            for (int x = 0; x < d; x++)
+            {
+                float dx = x - r; float dy = y - r;
+                if (dx * dx + dy * dy <= r * r)
+                    finalPixels[y * d + x] = sourcePixels[y * d + x];
+                else
+                    finalPixels[y * d + x] = clear;
+            }
+        }
+        tex.SetPixels(finalPixels); tex.Apply();
+
+        // MATEMÁTICA CORRIGIDA: Força o PPU para que a imagem fique com o tamanho exato da borda
+        float ppu = d / 2.56f;
+        return Sprite.Create(tex, new Rect(0, 0, d, d), new Vector2(0.5f, 0.5f), ppu);
+    }
+
     public static GameObject New(string name, Transform parent) { var go = new GameObject(name); go.transform.SetParent(parent, false); return go; }
     public static void Deco(GameObject go, Color color) { Image img = go.AddComponent<Image>(); img.color = color; img.raycastTarget = false; }
     public static void Deco(RectTransform rt, Color color) { Deco(rt.gameObject, color); }
     private static TMP_Text TxtNode(GameObject go, float fontSize, Color color, FontStyles style, TextAlignmentOptions align) { TMP_Text t = go.AddComponent<TextMeshProUGUI>(); t.fontSize = fontSize; t.color = color; t.fontStyle = style; t.alignment = align; t.raycastTarget = false; return t; }
 }
+
+
 
 public class ButtonFeedback : MonoBehaviour, IPointerDownHandler, IPointerUpHandler, IPointerEnterHandler, IPointerExitHandler
 {

@@ -1,6 +1,7 @@
 // ============================================================
 // CharacterManager.cs
 // Sistema de Save/Load local usando JSON e ficheiros PNG.
+// Atualização em Tempo Real das Estatísticas do Token.
 // ============================================================
 using UnityEngine;
 using System.IO;
@@ -13,39 +14,27 @@ public class CharField { public string key; public string value; }
 [Serializable]
 public class CharacterRecord
 {
-    public string id;
-    public string system;
-    public string name;
-    public string subText;
-    public string statsStr;
-    public string avatarFileName;
-
-    // Lista que guarda TODOS os inputs preenchidos (Status, Inventário, etc)
+    public string id; public string system; public string name; public string subText;
+    public string statsStr; public string avatarFileName;
     public List<CharField> fields = new List<CharField>();
 }
 
 [Serializable]
-public class CharacterDB
-{
-    public List<CharacterRecord> records = new List<CharacterRecord>();
-}
+public class CharacterDB { public List<CharacterRecord> records = new List<CharacterRecord>(); }
 
 public class CharacterManager : MonoBehaviour
 {
     public static CharacterManager Instance { get; private set; }
-
     public CharacterDB Database = new CharacterDB();
-    private string dirPath;
-    private string dbPath;
+    private string dirPath; private string dbPath;
+
+    public event Action OnCharactersUpdated; // Aviso de alteração
 
     private void Awake()
     {
-        if (Instance == null) { Instance = this; }
-        else { Destroy(gameObject); return; }
-
+        if (Instance == null) Instance = this; else { Destroy(gameObject); return; }
         dirPath = Path.Combine(Application.persistentDataPath, "Characters");
         if (!Directory.Exists(dirPath)) Directory.CreateDirectory(dirPath);
-
         dbPath = Path.Combine(dirPath, "chardb.json");
         LoadDatabase();
     }
@@ -63,9 +52,40 @@ public class CharacterManager : MonoBehaviour
     {
         string json = JsonUtility.ToJson(Database, true);
         File.WriteAllText(dbPath, json);
+        OnCharactersUpdated?.Invoke();
     }
 
-    // --- ATUALIZADO: Gere Criações e Edições Inteligentes ---
+    public CharacterRecord GetCharacter(string id) => Database.records.Find(r => r.id == id);
+
+    // EDITA APENAS UM CAMPO (Ex: HP no Token) E RECALCULA O PAINEL
+    public void UpdateCharacterField(string id, string key, string value)
+    {
+        var record = GetCharacter(id);
+        if (record != null)
+        {
+            var field = record.fields.Find(f => f.key == key);
+            if (field != null) field.value = value;
+            else record.fields.Add(new CharField { key = key, value = value });
+
+            RebuildStatsStr(record);
+            SaveDatabase();
+        }
+    }
+
+    private void RebuildStatsStr(CharacterRecord record)
+    {
+        string cGold = "#E8C84A", cBlue = "#598CD9", cRed = "#D95959", cPurp = "#9D59D9";
+        if (record.system == "D&D 5e")
+        {
+            record.statsStr = $"HP: <color={cGold}>{GetField(record, "dnd_hp_curr")}/{GetField(record, "dnd_hp_max")}</color>   CA: <color={cRed}>{GetField(record, "dnd_ac")}</color>   MOV: <color={cBlue}>{GetField(record, "dnd_spd")}</color>";
+        }
+        else
+        {
+            record.statsStr = $"PV: <color={cGold}>{GetField(record, "ord_pv_curr")}/{GetField(record, "ord_pv_max")}</color>   PE: <color={cBlue}>{GetField(record, "ord_pe_curr")}/{GetField(record, "ord_pe_max")}</color>   SAN: <color={cPurp}>{GetField(record, "ord_san_curr")}/{GetField(record, "ord_san_max")}</color>   DEF: <color={cRed}>{GetField(record, "ord_defesa")}</color>";
+        }
+    }
+    private string GetField(CharacterRecord r, string k) { var f = r.fields.Find(x => x.key == k); return f != null && !string.IsNullOrEmpty(f.value) ? f.value : "0"; }
+
     public void SaveCharacter(CharacterRecord record, Texture2D newAvatar, bool isEdit, bool avatarChanged)
     {
         if (isEdit)
@@ -78,42 +98,30 @@ public class CharacterManager : MonoBehaviour
                     if (newAvatar != null)
                     {
                         string fileName = "avatar_" + record.id + "_" + DateTime.Now.Ticks + ".png";
-                        string fullPath = Path.Combine(dirPath, fileName);
-                        File.WriteAllBytes(fullPath, newAvatar.EncodeToPNG());
+                        File.WriteAllBytes(Path.Combine(dirPath, fileName), newAvatar.EncodeToPNG());
                         record.avatarFileName = fileName;
                     }
-                    else
-                    {
-                        record.avatarFileName = "";
-                    }
-
-                    // Apaga foto velha para libertar espaço
+                    else record.avatarFileName = "";
                     if (!string.IsNullOrEmpty(existing.avatarFileName))
                     {
                         string oldPath = Path.Combine(dirPath, existing.avatarFileName);
                         if (File.Exists(oldPath)) File.Delete(oldPath);
                     }
                 }
-                else
-                {
-                    record.avatarFileName = existing.avatarFileName; // Mantém a foto antiga
-                }
-                Database.records.Remove(existing); // Remove o Registo antigo
+                else record.avatarFileName = existing.avatarFileName;
+                Database.records.Remove(existing);
             }
         }
-        else // Criação Nova
+        else
         {
             if (newAvatar != null)
             {
                 string fileName = "avatar_" + record.id + ".png";
-                string fullPath = Path.Combine(dirPath, fileName);
-                File.WriteAllBytes(fullPath, newAvatar.EncodeToPNG());
+                File.WriteAllBytes(Path.Combine(dirPath, fileName), newAvatar.EncodeToPNG());
                 record.avatarFileName = fileName;
             }
         }
-
-        Database.records.Add(record);
-        SaveDatabase();
+        Database.records.Add(record); SaveDatabase();
     }
 
     public void DeleteCharacter(string id)
@@ -126,8 +134,7 @@ public class CharacterManager : MonoBehaviour
                 string imgPath = Path.Combine(dirPath, record.avatarFileName);
                 if (File.Exists(imgPath)) File.Delete(imgPath);
             }
-            Database.records.Remove(record);
-            SaveDatabase();
+            Database.records.Remove(record); SaveDatabase();
         }
     }
 
@@ -138,8 +145,7 @@ public class CharacterManager : MonoBehaviour
         if (File.Exists(path))
         {
             byte[] bytes = File.ReadAllBytes(path);
-            Texture2D tex = new Texture2D(2, 2);
-            tex.LoadImage(bytes);
+            Texture2D tex = new Texture2D(2, 2); tex.LoadImage(bytes);
             return tex;
         }
         return null;
