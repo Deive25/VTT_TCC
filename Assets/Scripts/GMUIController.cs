@@ -85,7 +85,8 @@ public class GMUIController : MonoBehaviour
         RectTransform p = VTTLayout.Panel("GM_Right", cvTransform, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f), W_RIGHT);
         float y = 0f;
         y = DrawPanelHeader(p, y, "TELA DO MESTRE");
-        y = DrawSecHeader(p, y, "CAMERA"); y = DrawCameraSection(p, y);
+        y = DrawSecHeader(p, y, "TELA DOS JOGADORES"); y = DrawPlayerScreenSection(p, y);
+        y = DrawSecHeader(p, y, "CAMERA DO MESTRE"); y = DrawCameraSection(p, y);
         y = DrawSecHeader(p, y, "DADOS"); y = DrawDiceSection(p, y);
         y = DrawSecHeader(p, y, "NEVOA DE GUERRA"); y = DrawFogSection(p, y);
         y = DrawSecHeader(p, y, "INFORMACOES"); y = DrawInfoSection(p, y);
@@ -114,7 +115,6 @@ public class GMUIController : MonoBehaviour
 
         y = DrawSecHeader(p, y, "TOKENS DA CAMPANHA");
 
-        // --- TAMANHO PADRÃO COM BARRA EXPONENCIAL ---
         VTTLayout.LabelFixed(p, PAD, y + 2f, 120f, 20f, 10f, VTTLayout.C_TEXT_DIM, FontStyles.Bold, TextAlignmentOptions.MidlineLeft).text = "TAMANHO PADRAO";
         TMP_Text valText = VTTLayout.LabelFixed(p, W_LEFT - PAD - 60f, y + 2f, 60f, 20f, 10f, VTTLayout.C_ACCENT, FontStyles.Bold, TextAlignmentOptions.MidlineRight);
         valText.text = TokenSystem.GlobalTokenScale.ToString("F2") + "x";
@@ -134,6 +134,65 @@ public class GMUIController : MonoBehaviour
         y -= 240f + SGAP;
 
         p.sizeDelta = new Vector2(W_LEFT, Mathf.Abs(y) + PAD * 2f);
+    }
+
+    private float DrawPlayerScreenSection(RectTransform p, float y)
+    {
+        // BOTÃO DA JANELA FLUTUANTE
+        VTTLayout.BtnFull(p, y, BH, -PAD * 2f, "ABRIR JANELA FLUTUANTE", VTTLayout.C_BTN_PRI, VTTLayout.C_BDR_ACC, VTTLayout.C_TEXT, 11f).onClick.AddListener(() => {
+            if (PlayerDisplaySystem.Instance != null) PlayerDisplaySystem.Instance.OpenWindow();
+        });
+        y -= BH + GAP;
+
+        float hw = (W_RIGHT - PAD * 2f - GAP) * 0.5f;
+
+        // --- SISTEMA DE ESCOLHER O CABO HDMI (MONITOR 2, 3, etc) ---
+        string initialMon = PlayerDisplaySystem.Instance != null ? PlayerDisplaySystem.Instance.GetCurrentDisplayName() : "MONITOR 2";
+        Button cycleBtn = VTTLayout.BtnFixed(p, PAD, y, hw, BH, "ALVO:\n" + initialMon, VTTLayout.C_SEC_BG, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT_DIM, 9f, true);
+        TMP_Text monitorText = cycleBtn.GetComponentInChildren<TMP_Text>();
+        cycleBtn.onClick.AddListener(() => {
+            if (PlayerDisplaySystem.Instance != null)
+            {
+                PlayerDisplaySystem.Instance.CycleTargetDisplay();
+                monitorText.text = "ALVO:\n" + PlayerDisplaySystem.Instance.GetCurrentDisplayName();
+            }
+        });
+
+        VTTLayout.BtnFixed(p, PAD + hw + GAP, y, hw, BH, "EJETAR PARA\nO ALVO", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, 10f).onClick.AddListener(() => {
+            if (PlayerDisplaySystem.Instance != null) PlayerDisplaySystem.Instance.SendToMonitor();
+        });
+        y -= BH + GAP;
+
+        // CÂMERAS E DADOS
+        Button linkBtn = VTTLayout.BtnFixed(p, PAD, y, hw, BH - 4f, "VINCULAR CÂMERAS", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, 9f);
+        linkBtn.onClick.AddListener(() => {
+            if (PlayerDisplaySystem.Instance != null)
+            {
+                PlayerDisplaySystem.Instance.isLinkedToGM = !PlayerDisplaySystem.Instance.isLinkedToGM;
+                VTTLayout.SetBtnColor(linkBtn, PlayerDisplaySystem.Instance.isLinkedToGM ? VTTLayout.C_BTN_ACTIVE : VTTLayout.C_BTN_SEC);
+            }
+        });
+
+        VTTLayout.BtnFixed(p, PAD + hw + GAP, y, hw, BH - 4f, "FOCAR MAPA TODO", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, 9f).onClick.AddListener(() => {
+            if (PlayerDisplaySystem.Instance != null)
+            {
+                PlayerDisplaySystem.Instance.FocusFullMap();
+                VTTLayout.SetBtnColor(linkBtn, VTTLayout.C_BTN_SEC);
+            }
+        });
+        y -= (BH - 4f) + GAP;
+
+        Button diceBtn = VTTLayout.BtnFull(p, y, BH - 4f, -PAD * 2f, "ROLAGENS NA TELA DOS JOGADORES: OFF", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, 10f, bold: false);
+        diceBtn.onClick.AddListener(() => {
+            if (PlayerDisplaySystem.Instance != null)
+            {
+                PlayerDisplaySystem.Instance.showDiceRolls = !PlayerDisplaySystem.Instance.showDiceRolls;
+                diceBtn.GetComponentInChildren<TMP_Text>().text = PlayerDisplaySystem.Instance.showDiceRolls ? "ROLAGENS NA TELA DOS JOGADORES: ON" : "ROLAGENS NA TELA DOS JOGADORES: OFF";
+                VTTLayout.SetBtnColor(diceBtn, PlayerDisplaySystem.Instance.showDiceRolls ? VTTLayout.C_BTN_ACTIVE : VTTLayout.C_BTN_SEC);
+            }
+        });
+
+        return y - (BH - 4f) - SGAP;
     }
 
     private void RefreshTokensList()
@@ -274,6 +333,18 @@ public class GMUIController : MonoBehaviour
 
     private float DrawFogSection(RectTransform p, float y)
     {
+        Button xrayBtn = VTTLayout.BtnFull(p, y, BH - 4f, -PAD * 2f, "VISÃO RAIO-X: DESLIGADA", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, Color.white, VTTLayout.F_BTN, bold: false);
+        xrayBtn.onClick.AddListener(() => {
+            if (fogController != null)
+            {
+                bool isXRay = !fogController.isXRayActive;
+                fogController.ToggleXRay(isXRay);
+                xrayBtn.GetComponentInChildren<TMP_Text>().text = isXRay ? "VISÃO RAIO-X: LIGADA" : "VISÃO RAIO-X: DESLIGADA";
+                VTTLayout.SetBtnColor(xrayBtn, isXRay ? VTTLayout.C_BTN_ACTIVE : VTTLayout.C_BTN_SEC);
+            }
+        });
+        y -= (BH - 4f) + GAP;
+
         float hw = (W_RIGHT - PAD * 2f - GAP) * 0.5f;
         fogPaintBtn = VTTLayout.BtnFixed(p, PAD, y, hw, BH, "PINTAR", VTTLayout.C_BTN_PAINT, VTTLayout.C_BDR_PAINT, VTTLayout.C_TEXT, VTTLayout.F_BTN);
         fogPaintBtn.onClick.AddListener(() => { if (fogController != null) { fogController.SetMode(FogOfWarController.FogMode.Paint); fogController.SetActive(!(fogController.IsActive && fogController.CurrentMode == FogOfWarController.FogMode.Paint)); } });
@@ -327,6 +398,27 @@ public class GMUIController : MonoBehaviour
     private void SyncMouseCoord() { if (coordSystem != null && infoText != null && mapController != null && mapController.IsMapLoaded) OnMapInfo(new MapInfo { scale = mapController.CurrentScale, mouseNormalized = coordSystem.GetMouseNormalized(), isLoaded = true }); }
     private void SyncFogState() { if (fogController == null || fogStatusText == null) return; bool active = fogController.IsActive; bool isPaint = fogController.CurrentMode == FogOfWarController.FogMode.Paint; if (!active) { fogStatusText.text = "Ferramenta inativa"; fogStatusText.color = VTTLayout.C_TEXT_DIM; } else if (isPaint) { fogStatusText.text = "Modo pintura ativo"; fogStatusText.color = VTTLayout.RGB(0.30f, 0.60f, 0.90f); } else { fogStatusText.text = "Modo apagar ativo"; fogStatusText.color = VTTLayout.RGB(0.85f, 0.40f, 0.35f); } VTTLayout.SetBtnColor(fogPaintBtn, (active && isPaint) ? VTTLayout.C_BTN_ACTIVE : VTTLayout.C_BTN_PAINT); VTTLayout.SetBtnColor(fogEraseBtn, (active && !isPaint) ? VTTLayout.C_BTN_ACTIVE : VTTLayout.C_BTN_ERASE); }
     private void OnMapInfo(MapInfo info) { if (infoText == null || !info.isLoaded) return; string cursor = info.mouseNormalized.HasValue ? info.mouseNormalized.Value.x.ToString("F3") + "  " + info.mouseNormalized.Value.y.ToString("F3") : "fora do mapa"; float zoom = (cameraController != null) ? cameraController.CurrentZoom : 0f; string fogSt = (fogController != null && fogController.IsActive) ? "Ativa" : "Inativa"; infoText.text = "Acesso    OK\nZoom      " + zoom.ToString("F2") + "\nCursor    " + cursor + "\nNevoa     " + fogSt; }
-    private void RefreshHistory() { if (historyText == null || diceOverlay == null) return; var h = diceOverlay.History; if (h.Count == 0) { historyText.text = "Nenhuma rolagem ainda"; return; } System.Text.StringBuilder sb = new System.Text.StringBuilder(); int n = Mathf.Min(h.Count, 4); for (int i = 0; i < n; i++) { sb.Append(h[i].descriptor + "  =>  " + h[i].total); if (i < n - 1) sb.Append("\n"); } historyText.text = sb.ToString(); }
+
+    private void RefreshHistory()
+    {
+        if (historyText == null || diceOverlay == null) return;
+        var h = diceOverlay.History;
+        if (h.Count == 0) { historyText.text = "Nenhuma rolagem ainda"; return; }
+
+        System.Text.StringBuilder sb = new System.Text.StringBuilder();
+        int n = Mathf.Min(h.Count, 4);
+        for (int i = 0; i < n; i++)
+        {
+            sb.Append(h[i].descriptor + "  =>  " + h[i].total);
+            if (i < n - 1) sb.Append("\n");
+        }
+        historyText.text = sb.ToString();
+
+        if (PlayerDisplaySystem.Instance != null && PlayerDisplaySystem.Instance.showDiceRolls)
+        {
+            PlayerDisplaySystem.Instance.ShowRoll(h[0].descriptor + "\n=> " + h[0].total + " <=");
+        }
+    }
+
     private void RefreshBrushLabel() { if (brushSizeText != null && fogController != null) brushSizeText.text = fogController.BrushRadius.ToString(); }
 }

@@ -1,0 +1,17 @@
+Nevoa de Guerra
+	- Desativar e ativar as áreas pintadas, para que o mestre consiga ver o que tem por baixo delas - V
+
+Players
+	- player escolher como deseja ajeitar a imagem de ícone do personagem
+	- player poder escolher melhor a cor de sua borda
+	- Criação de NPCs e Inimigos
+
+Novas Funcionalidades
+	- Tela de exibição para destinada ao projetor e vida real ou a uma exibição de tela separa, onde mostra o que seria a visão apenas que o mestre quer que o players veja, ou seja o mapa inteiro com a nevoa, tendo a escolha de dar zoom e mover a câmera de visão mas se limitar a ou o mapa inteiro ou a zoom de parte dele e nada mais, sem todas as Ui e no máximo o texto de dados quando ele desejar que seja mostrado as rolagens - V
+
+Mapa
+	- Escala de coordenadas e tamanho correta para a integração com a vida real/kinect
+
+Código
+	- Rever arquitetura de arquivos e tudo mais
+	- Otimizar e rever o código onde necessário 
