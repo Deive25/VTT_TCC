@@ -25,7 +25,7 @@ public class TokenController : MonoBehaviour
     private Camera _mainCam;
     private SpriteRenderer _spriteRenderer;
 
-    private void Start()
+    private void Awake()
     {
         _mapController = FindAnyObjectByType<MapController>();
         _fogController = FindAnyObjectByType<FogOfWarController>();
