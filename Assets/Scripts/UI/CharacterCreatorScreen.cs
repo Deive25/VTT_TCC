@@ -17,6 +17,8 @@ public class CharacterCreatorScreen : MonoBehaviour
     private string _currentSystem;
     private string _editingId = null;
     private bool _avatarChanged = false;
+    private Sprite _previewSprite = null;
+    private bool _isNewAvatar = false;
 
     // DICIONÁRIO MÁGICO: Guarda todos os campos criados para fácil leitura/escrita
     private Dictionary<string, TMP_InputField> _fieldMap = new Dictionary<string, TMP_InputField>();
@@ -422,10 +424,17 @@ public class CharacterCreatorScreen : MonoBehaviour
         if (MapFileLoader.Instance != null)
         {
             MapFileLoader.Instance.OpenFilePicker((tex) => {
+                // Previne lixo se o usuário trocar a imagem duas vezes na mesma tela
+                if (_isNewAvatar && currentAvatarTex != null) Destroy(currentAvatarTex);
+                if (_previewSprite != null) Destroy(_previewSprite);
+
                 currentAvatarTex = tex;
-                avatarPreview.sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
-                avatarPreview.color = Color.white;
+                _isNewAvatar = true;
                 _avatarChanged = true;
+
+                _previewSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
+                avatarPreview.sprite = _previewSprite;
+                avatarPreview.color = Color.white;
             });
         }
     }
@@ -463,12 +472,19 @@ public class CharacterCreatorScreen : MonoBehaviour
         }
         if (DashboardOverlay.Instance != null) DashboardOverlay.Instance.RefreshDashboard();
 
+        if (_previewSprite != null) { Destroy(_previewSprite); _previewSprite = null; }
+        _isNewAvatar = false;
+
         ClosePanel();
     }
 
     // --- NOVA: ABRE A FICHA PARA EDIÇÃO ---
     public void OpenForEdit(CharacterRecord record)
     {
+        // 1. Limpeza inicial de lixo da sessão anterior
+        if (_previewSprite != null) { Destroy(_previewSprite); _previewSprite = null; }
+        _isNewAvatar = false;
+
         _editingId = record.id;
         _currentSystem = record.system;
         _avatarChanged = false;
@@ -477,11 +493,12 @@ public class CharacterCreatorScreen : MonoBehaviour
         // Limpa lixo anterior
         foreach (var kvp in _fieldMap) kvp.Value.text = "";
 
-        // Carrega foto
+        // 2. Carrega foto do HD e aplica a correção do Sprite AQUI!
         currentAvatarTex = CharacterManager.Instance.LoadAvatar(record.avatarFileName);
         if (currentAvatarTex != null)
         {
-            avatarPreview.sprite = Sprite.Create(currentAvatarTex, new Rect(0, 0, currentAvatarTex.width, currentAvatarTex.height), new Vector2(0.5f, 0.5f));
+            _previewSprite = Sprite.Create(currentAvatarTex, new Rect(0, 0, currentAvatarTex.width, currentAvatarTex.height), new Vector2(0.5f, 0.5f));
+            avatarPreview.sprite = _previewSprite;
             avatarPreview.color = Color.white;
         }
         else
@@ -512,11 +529,16 @@ public class CharacterCreatorScreen : MonoBehaviour
 
     public void OpenPanel(string systemName)
     {
+        // 1. Limpeza inicial de lixo da sessão anterior
+        if (_previewSprite != null) { Destroy(_previewSprite); _previewSprite = null; }
+        _isNewAvatar = false;
+
         _editingId = null; // Modo de Criação Limpo
         _avatarChanged = true;
         _currentSystem = systemName;
         _headerTitle.text = "MONTAGEM DE FICHA: " + systemName.ToUpper();
 
+        // 2. Garante que a foto está vazia para a ficha nova
         currentAvatarTex = null;
         avatarPreview.color = Color.clear;
 
@@ -536,5 +558,12 @@ public class CharacterCreatorScreen : MonoBehaviour
         _mainScreen.transform.SetAsLastSibling();
     }
 
-    public void ClosePanel() { _mainScreen.SetActive(false); }
+    public void ClosePanel()
+    {
+        if (_previewSprite != null) { Destroy(_previewSprite); _previewSprite = null; }
+        if (_isNewAvatar && currentAvatarTex != null) { Destroy(currentAvatarTex); currentAvatarTex = null; }
+        _isNewAvatar = false;
+
+        _mainScreen.SetActive(false);
+    }
 }

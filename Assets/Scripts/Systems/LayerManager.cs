@@ -83,7 +83,16 @@ public class LayerManager : MonoBehaviour
         LayerData layer = _layers.Find(l => l.id == id);
         if (layer != null)
         {
+            // --- CORREÇÃO: Limpeza de Memória ---
+            // Destrói a textura da névoa
             if (layer.fogTex != null) Destroy(layer.fogTex);
+
+            // Destrói a textura principal do mapa importada pelo usuário
+            if (layer.renderer != null && layer.renderer.sprite != null)
+            {
+                Destroy(layer.renderer.sprite.texture);
+            }
+
             Destroy(layer.gameObject);
 
             _layers.Remove(layer);

@@ -1,3 +1,9 @@
+// ============================================================
+// GMUIController.cs
+// Correção Definitiva:
+// 1. Painel Direito visível (Máscara corrigida e largura responsiva).
+// 2. Sistema Blindado Anti-Race Condition (Ignora o PlayerCanvas).
+// ============================================================
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
@@ -47,6 +53,12 @@ public class GMUIController : MonoBehaviour
         BuildUI();
         RefreshLayersList();
         RefreshTokensList();
+
+        if (CharacterManager.Instance != null)
+        {
+            CharacterManager.Instance.OnCharactersUpdated -= RefreshTokensList;
+            CharacterManager.Instance.OnCharactersUpdated += RefreshTokensList;
+        }
     }
 
     private void OnEnable()
@@ -55,7 +67,12 @@ public class GMUIController : MonoBehaviour
         MapEvents.OnLayersChanged += RefreshLayersList;
         if (diceOverlay != null) diceOverlay.OnHistoryChanged += RefreshHistory;
         if (fogController != null) fogController.OnBrushChanged += RefreshBrushLabel;
-        if (CharacterManager.Instance != null) CharacterManager.Instance.OnCharactersUpdated += RefreshTokensList;
+
+        if (CharacterManager.Instance != null)
+        {
+            CharacterManager.Instance.OnCharactersUpdated -= RefreshTokensList;
+            CharacterManager.Instance.OnCharactersUpdated += RefreshTokensList;
+        }
     }
 
     private void OnDisable()
@@ -74,15 +91,46 @@ public class GMUIController : MonoBehaviour
 
     private void BuildUI()
     {
-        Canvas cv = FindAnyObjectByType<Canvas>();
-        if (cv == null) return;
+        // --- SOLUÇÃO DO BUG: Procura Inteligente e Segura de Canvas ---
+        // Garante que o menu do Mestre NUNCA é desenhado no Projetor/PlayerCanvas.
+        Canvas cv = GetComponent<Canvas>();
+        if (cv == null)
+        {
+            Canvas[] allCanvas = FindObjectsOfType<Canvas>();
+            foreach (var c in allCanvas)
+            {
+                if (c.gameObject.name != "PlayerCanvas")
+                {
+                    cv = c;
+                    break;
+                }
+            }
+        }
+
+        if (cv == null)
+        {
+            Debug.LogError("[GMUIController] Canvas principal não encontrado!");
+            return;
+        }
+
         BuildRightPanel(cv.transform);
         BuildLeftPanel(cv.transform);
     }
 
     private void BuildRightPanel(Transform cvTransform)
     {
-        RectTransform p = VTTLayout.Panel("GM_Right", cvTransform, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f), W_RIGHT);
+        RectTransform baseRT = VTTLayout.Panel("GM_Right_Base", cvTransform, new Vector2(1f, 0f), new Vector2(1f, 1f), new Vector2(1f, 1f), W_RIGHT);
+        baseRT.sizeDelta = new Vector2(W_RIGHT, 0);
+
+        ScrollRect scroll = VTTLayout.MakeScrollView("RightScroll", baseRT, 0, 0, W_RIGHT, 0, out RectTransform p);
+        RectTransform scrollRT = scroll.GetComponent<RectTransform>();
+        scrollRT.anchorMin = Vector2.zero; scrollRT.anchorMax = Vector2.one;
+        scrollRT.sizeDelta = Vector2.zero;
+        scrollRT.anchoredPosition = Vector2.zero;
+        scroll.movementType = ScrollRect.MovementType.Clamped;
+
+        // (A linha problemática do Color.clear foi removida para a máscara funcionar corretamente)
+
         float y = 0f;
         y = DrawPanelHeader(p, y, "TELA DO MESTRE");
         y = DrawSecHeader(p, y, "TELA DOS JOGADORES"); y = DrawPlayerScreenSection(p, y);
@@ -90,12 +138,16 @@ public class GMUIController : MonoBehaviour
         y = DrawSecHeader(p, y, "DADOS"); y = DrawDiceSection(p, y);
         y = DrawSecHeader(p, y, "NEVOA DE GUERRA"); y = DrawFogSection(p, y);
         y = DrawSecHeader(p, y, "INFORMACOES"); y = DrawInfoSection(p, y);
-        p.sizeDelta = new Vector2(W_RIGHT, Mathf.Abs(y) + PAD);
+
+        // --- SOLUÇÃO DO BUG DO PAINEL FANTASMA: Largura redefinida para 0f ---
+        p.sizeDelta = new Vector2(0f, Mathf.Abs(y) + PAD);
     }
 
     private void BuildLeftPanel(Transform cvTransform)
     {
-        RectTransform p = VTTLayout.Panel("GM_Left", cvTransform, new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f), W_LEFT, VTTLayout.C_LEFT_BG);
+        RectTransform p = VTTLayout.Panel("GM_Left", cvTransform, new Vector2(0f, 0f), new Vector2(0f, 1f), new Vector2(0f, 1f), W_LEFT, VTTLayout.C_LEFT_BG);
+        p.sizeDelta = new Vector2(W_LEFT, 0);
+
         float y = 0f;
         y = DrawPanelHeader(p, y, "RECURSOS");
 
@@ -110,7 +162,9 @@ public class GMUIController : MonoBehaviour
             if (MapFileLoader.Instance != null) MapFileLoader.Instance.OpenFilePicker((tex) => LayerManager.Instance.AddLayer(tex));
         });
         y -= BH + GAP;
-        VTTLayout.MakeScrollView("BoardsScroll", p, 0, y, W_LEFT, 150f, out layersContainer);
+
+        ScrollRect boardScroll = VTTLayout.MakeScrollView("BoardsScroll", p, 0, y, W_LEFT, 150f, out layersContainer);
+        boardScroll.movementType = ScrollRect.MovementType.Clamped;
         y -= 150f + SGAP;
 
         y = DrawSecHeader(p, y, "TOKENS DA CAMPANHA");
@@ -130,15 +184,18 @@ public class GMUIController : MonoBehaviour
         });
         y -= 26f + SGAP;
 
-        VTTLayout.MakeScrollView("TokensScroll", p, 0, y, W_LEFT, 240f, out tokensContainer);
-        y -= 240f + SGAP;
-
-        p.sizeDelta = new Vector2(W_LEFT, Mathf.Abs(y) + PAD * 2f);
+        ScrollRect tokScroll = VTTLayout.MakeScrollView("TokensScroll", p, 0, 0, 0, 0, out tokensContainer);
+        RectTransform tokScrollRT = tokScroll.GetComponent<RectTransform>();
+        tokScrollRT.anchorMin = new Vector2(0, 0);
+        tokScrollRT.anchorMax = new Vector2(1, 1);
+        tokScrollRT.pivot = new Vector2(0, 1);
+        tokScrollRT.offsetMax = new Vector2(0, y);
+        tokScrollRT.offsetMin = new Vector2(0, PAD);
+        tokScroll.movementType = ScrollRect.MovementType.Clamped;
     }
 
     private float DrawPlayerScreenSection(RectTransform p, float y)
     {
-        // BOTÃO DA JANELA FLUTUANTE
         VTTLayout.BtnFull(p, y, BH, -PAD * 2f, "ABRIR JANELA FLUTUANTE", VTTLayout.C_BTN_PRI, VTTLayout.C_BDR_ACC, VTTLayout.C_TEXT, 11f).onClick.AddListener(() => {
             if (PlayerDisplaySystem.Instance != null) PlayerDisplaySystem.Instance.OpenWindow();
         });
@@ -146,7 +203,6 @@ public class GMUIController : MonoBehaviour
 
         float hw = (W_RIGHT - PAD * 2f - GAP) * 0.5f;
 
-        // --- SISTEMA DE ESCOLHER O CABO HDMI (MONITOR 2, 3, etc) ---
         string initialMon = PlayerDisplaySystem.Instance != null ? PlayerDisplaySystem.Instance.GetCurrentDisplayName() : "MONITOR 2";
         Button cycleBtn = VTTLayout.BtnFixed(p, PAD, y, hw, BH, "ALVO:\n" + initialMon, VTTLayout.C_SEC_BG, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT_DIM, 9f, true);
         TMP_Text monitorText = cycleBtn.GetComponentInChildren<TMP_Text>();
@@ -163,7 +219,6 @@ public class GMUIController : MonoBehaviour
         });
         y -= BH + GAP;
 
-        // CÂMERAS E DADOS
         Button linkBtn = VTTLayout.BtnFixed(p, PAD, y, hw, BH - 4f, "VINCULAR CÂMERAS", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, 9f);
         linkBtn.onClick.AddListener(() => {
             if (PlayerDisplaySystem.Instance != null)

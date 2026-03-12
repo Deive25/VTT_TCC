@@ -1,7 +1,8 @@
 ﻿// ============================================================
 // PlayerDisplaySystem.cs
-// Correção Definitiva da UI: Botões do Header gerados manualmente
-// para garantir ancoragem perfeita à direita, sem conflitos.
+// Correção de Bug (Race Condition): Tela agora é inicializada de 
+// forma atrasada no Start() para proteger as outras UIs do projeto.
+// Foco Automático do Mapa ao abrir a janela.
 // ============================================================
 using UnityEngine;
 using UnityEngine.UI;
@@ -25,7 +26,6 @@ public class PlayerDisplaySystem : MonoBehaviour
     public bool isLinkedToGM = false;
     public bool showDiceRolls = false;
 
-    // Gestão da Janela
     private Vector2 dragOffset;
     private bool isMinimized = false;
     private bool isMaximized = false;
@@ -38,7 +38,18 @@ public class PlayerDisplaySystem : MonoBehaviour
     {
         if (Instance == null) Instance = this;
         else { Destroy(gameObject); return; }
+    }
 
+    private void Start()
+    {
+        // SOLUÇÃO DO BUG: Atrasar 1 frame garante que o GMUIController e
+        // outros painéis não se fundem com a tela do projetor acidentalmente!
+        StartCoroutine(DelayedSetup());
+    }
+
+    private IEnumerator DelayedSetup()
+    {
+        yield return new WaitForEndOfFrame();
         SetupSystem();
     }
 
@@ -60,6 +71,7 @@ public class PlayerDisplaySystem : MonoBehaviour
         Camera.main.cullingMask &= ~(1 << 4);
 
         GameObject canvasGO = new GameObject("PlayerCanvas");
+        canvasGO.layer = 0; // Garante que a câmera do projetor consiga ler os dados!
         Canvas playerCanvas = canvasGO.AddComponent<Canvas>();
         playerCanvas.renderMode = RenderMode.ScreenSpaceCamera;
         playerCanvas.worldCamera = playerCam;
@@ -70,6 +82,7 @@ public class PlayerDisplaySystem : MonoBehaviour
         cs.referenceResolution = new Vector2(1920, 1080);
 
         GameObject textGO = new GameObject("DiceText");
+        textGO.layer = 0; // Textos ficam visíveis sem conflito com o MainCanvas
         textGO.transform.SetParent(canvasGO.transform, false);
         diceText = textGO.AddComponent<TextMeshProUGUI>();
         diceText.fontSize = 80;
@@ -90,7 +103,11 @@ public class PlayerDisplaySystem : MonoBehaviour
 
     private void BuildFloatingWindow()
     {
-        Canvas cv = FindAnyObjectByType<Canvas>();
+        // Procura explicitamente pelo painel mestre para se ancorar
+        GameObject mainCanvasGO = GameObject.Find("MainCanvas");
+        Canvas cv = null;
+        if (mainCanvasGO != null) cv = mainCanvasGO.GetComponent<Canvas>();
+        if (cv == null) cv = FindAnyObjectByType<Canvas>();
         if (cv == null) return;
 
         floatingWindow = new GameObject("PlayerViewWindow");
@@ -105,7 +122,6 @@ public class PlayerDisplaySystem : MonoBehaviour
         bg.color = Color.black;
         VTTLayout.AccentBar(windowRT, 4f, VTTLayout.C_ACCENT);
 
-        // HEADER
         GameObject header = new GameObject("Header");
         RectTransform hdrRT = header.AddComponent<RectTransform>();
         hdrRT.SetParent(windowRT, false);
@@ -124,7 +140,6 @@ public class PlayerDisplaySystem : MonoBehaviour
         titleRT.pivot = new Vector2(0, 0.5f);
         titleRT.anchoredPosition = new Vector2(15f, 0f);
 
-        // DRAG SYSTEM
         EventTrigger trigger = header.AddComponent<EventTrigger>();
         EventTrigger.Entry entryDown = new EventTrigger.Entry { eventID = EventTriggerType.PointerDown };
         entryDown.callback.AddListener((data) => {
@@ -145,7 +160,6 @@ public class PlayerDisplaySystem : MonoBehaviour
         });
         trigger.triggers.Add(entryDrag);
 
-        // --- BOTÕES GERADOS MANUALMENTE PARA EVITAR BUGS DE LAYOUT ---
         Button btnClose = BuildWinControlBtn(hdrRT, "X", VTTLayout.C_BTN_CLOSE, 0f);
         btnClose.onClick.AddListener(CloseWindow);
 
@@ -155,7 +169,6 @@ public class PlayerDisplaySystem : MonoBehaviour
         Button btnMin = BuildWinControlBtn(hdrRT, "_", VTTLayout.C_BTN_SEC, -80f);
         btnMin.onClick.AddListener(ToggleMinimize);
 
-        // O VÍDEO (Estrutura segura para AspectRatioFitter)
         viewCont = new GameObject("ViewContainer");
         RectTransform contRT = viewCont.AddComponent<RectTransform>();
         contRT.SetParent(windowRT, false);
@@ -178,13 +191,11 @@ public class PlayerDisplaySystem : MonoBehaviour
         floatingWindow.SetActive(false);
     }
 
-    // NOVA FUNÇÃO: Cria os botões do Windows perfeitamente encaixados à direita!
     private Button BuildWinControlBtn(RectTransform parent, string text, Color bgColor, float rightOffset)
     {
         GameObject go = new GameObject("WinBtn_" + text);
         RectTransform rt = go.AddComponent<RectTransform>();
         rt.SetParent(parent, false);
-        // Prende o pivô e a âncora estritamente na borda direita do ecrã!
         rt.anchorMin = new Vector2(1, 0.5f);
         rt.anchorMax = new Vector2(1, 0.5f);
         rt.pivot = new Vector2(1, 0.5f);
@@ -256,6 +267,9 @@ public class PlayerDisplaySystem : MonoBehaviour
         playerCam.targetTexture = playerViewTex;
         floatingWindow.SetActive(true);
         floatingWindow.transform.SetAsLastSibling();
+
+        // SOLUÇÃO DO BUG: Força a focar o mapa limpo quando se abre a janela pela 1ª vez
+        if (!isLinkedToGM) FocusFullMap();
     }
 
     public void CloseWindow() => floatingWindow.SetActive(false);

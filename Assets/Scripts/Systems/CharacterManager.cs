@@ -1,7 +1,7 @@
 // ============================================================
 // CharacterManager.cs
 // Sistema de Save/Load local usando JSON e ficheiros PNG.
-// Atualização em Tempo Real das Estatísticas do Token.
+// Otimizado com Cache de Texturas para evitar Memory Leaks.
 // ============================================================
 using UnityEngine;
 using System.IO;
@@ -28,7 +28,10 @@ public class CharacterManager : MonoBehaviour
     public CharacterDB Database = new CharacterDB();
     private string dirPath; private string dbPath;
 
-    public event Action OnCharactersUpdated; // Aviso de alteração
+    // --- OTIMIZAÇÃO: Cache de Texturas na Memória RAM ---
+    private Dictionary<string, Texture2D> avatarCache = new Dictionary<string, Texture2D>();
+
+    public event Action OnCharactersUpdated;
 
     private void Awake()
     {
@@ -57,7 +60,6 @@ public class CharacterManager : MonoBehaviour
 
     public CharacterRecord GetCharacter(string id) => Database.records.Find(r => r.id == id);
 
-    // EDITA APENAS UM CAMPO (Ex: HP no Token) E RECALCULA O PAINEL
     public void UpdateCharacterField(string id, string key, string value)
     {
         var record = GetCharacter(id);
@@ -100,12 +102,19 @@ public class CharacterManager : MonoBehaviour
                         string fileName = "avatar_" + record.id + "_" + DateTime.Now.Ticks + ".png";
                         File.WriteAllBytes(Path.Combine(dirPath, fileName), newAvatar.EncodeToPNG());
                         record.avatarFileName = fileName;
+
+                        // Atualiza o cache imediatamente
+                        avatarCache[fileName] = newAvatar;
                     }
                     else record.avatarFileName = "";
+
                     if (!string.IsNullOrEmpty(existing.avatarFileName))
                     {
                         string oldPath = Path.Combine(dirPath, existing.avatarFileName);
                         if (File.Exists(oldPath)) File.Delete(oldPath);
+
+                        // Limpa a textura velha da memória
+                        UnloadAvatarFromCache(existing.avatarFileName);
                     }
                 }
                 else record.avatarFileName = existing.avatarFileName;
@@ -119,6 +128,9 @@ public class CharacterManager : MonoBehaviour
                 string fileName = "avatar_" + record.id + ".png";
                 File.WriteAllBytes(Path.Combine(dirPath, fileName), newAvatar.EncodeToPNG());
                 record.avatarFileName = fileName;
+
+                // Insere no cache
+                avatarCache[fileName] = newAvatar;
             }
         }
         Database.records.Add(record); SaveDatabase();
@@ -133,6 +145,9 @@ public class CharacterManager : MonoBehaviour
             {
                 string imgPath = Path.Combine(dirPath, record.avatarFileName);
                 if (File.Exists(imgPath)) File.Delete(imgPath);
+
+                // Limpa a textura da memória
+                UnloadAvatarFromCache(record.avatarFileName);
             }
             Database.records.Remove(record); SaveDatabase();
         }
@@ -141,13 +156,36 @@ public class CharacterManager : MonoBehaviour
     public Texture2D LoadAvatar(string fileName)
     {
         if (string.IsNullOrEmpty(fileName)) return null;
+
+        // Se já carregamos essa foto antes, apenas devolve ela da memória RAM
+        if (avatarCache.TryGetValue(fileName, out Texture2D cachedTex) && cachedTex != null)
+        {
+            return cachedTex;
+        }
+
         string path = Path.Combine(dirPath, fileName);
         if (File.Exists(path))
         {
             byte[] bytes = File.ReadAllBytes(path);
-            Texture2D tex = new Texture2D(2, 2); tex.LoadImage(bytes);
+            Texture2D tex = new Texture2D(2, 2);
+            tex.LoadImage(bytes);
+
+            // Salva no cache para a próxima vez
+            avatarCache[fileName] = tex;
             return tex;
         }
         return null;
+    }
+
+    // Método utilitário para destruir texturas com segurança
+    private void UnloadAvatarFromCache(string fileName)
+    {
+        if (string.IsNullOrEmpty(fileName)) return;
+
+        if (avatarCache.TryGetValue(fileName, out Texture2D tex))
+        {
+            if (tex != null) Destroy(tex);
+            avatarCache.Remove(fileName);
+        }
     }
 }

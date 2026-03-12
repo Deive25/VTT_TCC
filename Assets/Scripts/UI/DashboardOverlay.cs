@@ -124,30 +124,6 @@ public class DashboardOverlay : MonoBehaviour
         t2.rectTransform.offsetMin = new Vector2(12f, 0);
     }
 
-    private void Update()
-    {
-        if (_mainScreen.activeSelf && _gridRT != null && _gridLayout != null)
-        {
-            int childCount = _gridRT.childCount;
-            float width = _gridRT.rect.width;
-
-            if (width > 0 && childCount > 0)
-            {
-                int columns = Mathf.FloorToInt((width + _gridLayout.spacing.x) / (_gridLayout.cellSize.x + _gridLayout.spacing.x));
-                if (columns < 1) columns = 1;
-
-                int rows = Mathf.CeilToInt((float)childCount / columns);
-                float requiredHeight = (rows * _gridLayout.cellSize.y) + ((rows - 1) * _gridLayout.spacing.y);
-
-                LayoutElement le = _gridRT.GetComponent<LayoutElement>();
-                if (le != null && Mathf.Abs(le.minHeight - requiredHeight) > 1f)
-                {
-                    le.minHeight = requiredHeight;
-                    LayoutRebuilder.ForceRebuildLayoutImmediate(_contentRT);
-                }
-            }
-        }
-    }
 
     // --- NOVA ASSINATURA: statsFormatado em vez de HP/MOV ---
     public void AddCharacter(string name, string subText, string statsFormatado, Texture2D avatarTex)
@@ -295,32 +271,50 @@ public class DashboardOverlay : MonoBehaviour
         _mainScreen.SetActive(false);
     }
 
-    // --- NOVA FUNÇÃO: Sincroniza a tela com o Banco de Dados Local ---
     public void RefreshDashboard()
     {
         if (_gridRT == null || CharacterManager.Instance == null) return;
 
-        // 1. Limpa os cartões antigos da tela (exceto o botão de +)
         foreach (Transform child in _gridRT)
         {
             if (child.name != "Card_Add") Destroy(child.gameObject);
         }
 
-        // 2. Lê a base de dados e recria as fichas
         foreach (var record in CharacterManager.Instance.Database.records)
         {
             Texture2D tex = CharacterManager.Instance.LoadAvatar(record.avatarFileName);
             BuildCharacterCard(_gridRT, record, tex);
         }
 
-        // 3. Garante que o botão de adicionar (+) fica sempre no final da lista
         Transform addBtn = _gridRT.Find("Card_Add");
         if (addBtn != null) addBtn.SetAsLastSibling();
 
-        LayoutRebuilder.ForceRebuildLayoutImmediate(_contentRT);
+        // CORREÇÃO: Calcula a altura da grid UMA vez só, em vez de 60 vezes por segundo no Update
+        UpdateGridHeight();
     }
 
-    // Cole isto no seu ficheiro DashboardOverlay.cs substituindo a função original!
+    private void UpdateGridHeight()
+    {
+        Canvas.ForceUpdateCanvases();
+        int childCount = _gridRT.childCount;
+        float width = _gridRT.rect.width;
+
+        if (width > 0 && childCount > 0)
+        {
+            int columns = Mathf.FloorToInt((width + _gridLayout.spacing.x) / (_gridLayout.cellSize.x + _gridLayout.spacing.x));
+            if (columns < 1) columns = 1;
+            int rows = Mathf.CeilToInt((float)childCount / columns);
+            float requiredHeight = (rows * _gridLayout.cellSize.y) + ((rows - 1) * _gridLayout.spacing.y);
+
+            LayoutElement le = _gridRT.GetComponent<LayoutElement>();
+            if (le != null)
+            {
+                le.minHeight = requiredHeight;
+                LayoutRebuilder.ForceRebuildLayoutImmediate(_contentRT);
+            }
+        }
+    }
+
 
     private void BuildCharacterCard(RectTransform parent, CharacterRecord record, Texture2D avatarTex)
     {
@@ -333,10 +327,16 @@ public class DashboardOverlay : MonoBehaviour
         VTTLayout.AccentBar(cardRT, 4f, barColor);
 
         Image avImg = VTTLayout.MakeMaskedAvatar(cardRT, new Vector2(20f, 0f), new Vector2(90f, 90f), VTTLayout.C_CONTENT_BG);
+
+        // --- CORREÇÃO DE VAZAMENTO ---
         if (avatarTex != null)
         {
-            avImg.sprite = Sprite.Create(avatarTex, new Rect(0, 0, avatarTex.width, avatarTex.height), new Vector2(0.5f, 0.5f));
+            Sprite newSprite = Sprite.Create(avatarTex, new Rect(0, 0, avatarTex.width, avatarTex.height), new Vector2(0.5f, 0.5f));
+            avImg.sprite = newSprite;
             avImg.color = Color.white;
+
+            SpriteCleanup cleanup = card.AddComponent<SpriteCleanup>();
+            cleanup.spriteToDestroy = newSprite;
         }
 
         float textX = 130f;
@@ -386,4 +386,11 @@ public class DashboardOverlay : MonoBehaviour
             RefreshDashboard();
         });
     }
+}
+
+// Destrói o Sprite de vídeo/RAM automaticamente quando o objeto da UI for apagado
+public class SpriteCleanup : MonoBehaviour
+{
+    public Sprite spriteToDestroy;
+    private void OnDestroy() { if (spriteToDestroy != null) Destroy(spriteToDestroy); }
 }

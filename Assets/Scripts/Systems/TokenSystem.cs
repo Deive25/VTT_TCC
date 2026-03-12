@@ -1,7 +1,7 @@
 // ============================================================
 // TokenSystem.cs
-// Drag & Drop com limites extremos (0.01 a 10.0).
-// Sliders com Matemática Exponencial (Meio exato = 0.31x).
+// Drag & Drop otimizado com cache de referências.
+// Limites de tamanho expandidos (0.01x a 20.0x) e lógica de névoa corrigida.
 // ============================================================
 using UnityEngine;
 using UnityEngine.UI;
@@ -16,9 +16,22 @@ public class TokenController : MonoBehaviour
 
     private Vector3 offset;
     private Vector3 dragStartMousePos;
-
     private int colorIdx = 0;
     private Color[] palette = { Color.white, new Color(0.85f, 0.2f, 0.2f), new Color(0.2f, 0.5f, 0.9f), new Color(0.2f, 0.8f, 0.3f), new Color(0.92f, 0.78f, 0.28f), Color.black };
+
+    // --- OTIMIZAÇÃO: Cache de Referências ---
+    private MapController _mapController;
+    private FogOfWarController _fogController;
+    private Camera _mainCam;
+    private SpriteRenderer _spriteRenderer;
+
+    private void Start()
+    {
+        _mapController = FindAnyObjectByType<MapController>();
+        _fogController = FindAnyObjectByType<FogOfWarController>();
+        _mainCam = Camera.main;
+        _spriteRenderer = GetComponent<SpriteRenderer>();
+    }
 
     public void SetBorderColor(Color color) { if (borderRenderer != null) borderRenderer.color = color; }
     public void CycleBorderColor() { colorIdx = (colorIdx + 1) % palette.Length; SetBorderColor(palette[colorIdx]); }
@@ -29,7 +42,8 @@ public class TokenController : MonoBehaviour
         CircleCollider2D col = GetComponent<CircleCollider2D>();
         if (col != null) col.enabled = true;
 
-        GetComponent<SpriteRenderer>().sortingOrder = 41;
+        // Ao soltar no mapa, volta para a camada abaixo da névoa
+        if (_spriteRenderer != null) _spriteRenderer.sortingOrder = 41;
         if (borderRenderer != null) borderRenderer.sortingOrder = 40;
 
         RevealFogIfEnabled();
@@ -37,33 +51,36 @@ public class TokenController : MonoBehaviour
 
     public void RevealFogIfEnabled()
     {
-        if (isPlaced && revealsFog)
+        // Garante que só limpa a névoa se já estiver fixado no tabuleiro
+        if (isPlaced && revealsFog && _fogController != null)
         {
-            FogOfWarController fow = FindAnyObjectByType<FogOfWarController>();
-            if (fow != null) fow.RevealByToken(transform.position, transform.localScale.x * 2.5f);
+            _fogController.RevealByToken(transform.position, transform.localScale.x * 2.5f);
         }
     }
 
     void OnMouseDown()
     {
         dragStartMousePos = Input.mousePosition;
-        offset = transform.position - Camera.main.ScreenToWorldPoint(Input.mousePosition);
+        offset = transform.position - _mainCam.ScreenToWorldPoint(Input.mousePosition);
         offset.z = 0;
     }
 
     void OnMouseDrag()
     {
-        Vector3 newPos = Camera.main.ScreenToWorldPoint(Input.mousePosition) + offset;
+        if (!isPlaced) return; // Evita arrasto anômalo antes de fixar
+
+        Vector3 newPos = _mainCam.ScreenToWorldPoint(Input.mousePosition) + offset;
         newPos.z = transform.position.z;
 
-        MapController mc = FindAnyObjectByType<MapController>();
-        if (mc != null && mc.IsMapLoaded)
+        if (_mapController != null && _mapController.IsMapLoaded)
         {
-            Bounds b = mc.MapBounds;
+            Bounds b = _mapController.MapBounds;
             newPos.x = Mathf.Clamp(newPos.x, b.min.x, b.max.x);
             newPos.y = Mathf.Clamp(newPos.y, b.min.y, b.max.y);
         }
         transform.position = newPos;
+
+        // Limpa a névoa ativamente em tempo real enquanto o token passa por cima
         RevealFogIfEnabled();
     }
 
@@ -77,28 +94,29 @@ public class TokenController : MonoBehaviour
 
     public void FollowMouse()
     {
-        Vector3 newPos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+        Vector3 newPos = _mainCam.ScreenToWorldPoint(Input.mousePosition);
         newPos.z = -5f;
         transform.position = newPos;
 
-        // Scroll dinâmico por multiplicação (mais orgânico para escalas)
+        // Controle orgânico de escala via Scroll
         if (Input.mouseScrollDelta.y != 0)
         {
             float multiplier = Input.mouseScrollDelta.y > 0 ? 1.15f : 0.85f;
             float s = transform.localScale.x * multiplier;
-            s = Mathf.Clamp(s, 0.01f, 10.0f); // Limites extremos
+            s = Mathf.Clamp(s, 0.01f, 20.0f); // Limites expandidos
             transform.localScale = new Vector3(s, s, 1f);
         }
+
+        // Ajuste de borda antes de colocar no mapa
         if (Input.GetMouseButtonDown(1)) CycleBorderColor();
     }
 
     public bool TryPlaceInMap()
     {
-        MapController mc = FindAnyObjectByType<MapController>();
-        if (mc != null && mc.IsMapLoaded)
+        if (_mapController != null && _mapController.IsMapLoaded)
         {
-            Vector3 mousePos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
-            Bounds b = mc.MapBounds;
+            Vector3 mousePos = _mainCam.ScreenToWorldPoint(Input.mousePosition);
+            Bounds b = _mapController.MapBounds;
             if (mousePos.x < b.min.x || mousePos.x > b.max.x || mousePos.y < b.min.y || mousePos.y > b.max.y)
             {
                 Destroy(gameObject);
@@ -117,7 +135,6 @@ public class TokenSystem : MonoBehaviour
 {
     public static TokenSystem Instance { get; private set; }
 
-    // O tamanho inicial que o usuário percebeu ser o "ideal"
     public static float GlobalTokenScale = 0.31f;
 
     private GameObject _panel;
@@ -148,7 +165,9 @@ public class TokenSystem : MonoBehaviour
         SpriteRenderer avatarSR = go.AddComponent<SpriteRenderer>();
         Texture2D tex = CharacterManager.Instance.LoadAvatar(record.avatarFileName);
         avatarSR.sprite = VTTLayout.CreateCircularWorldSprite(tex);
-        avatarSR.sortingOrder = 201;
+
+        // --- CORREÇÃO: Passa por cima da névoa na primeira arrastada ---
+        avatarSR.sortingOrder = 501;
 
         GameObject borderGO = new GameObject("Border");
         borderGO.transform.SetParent(go.transform, false);
@@ -157,7 +176,7 @@ public class TokenSystem : MonoBehaviour
         SpriteRenderer borderSR = borderGO.AddComponent<SpriteRenderer>();
         borderSR.sprite = VTTLayout.GetCircleSprite();
         borderSR.color = record.system == "D&D 5e" ? VTTLayout.C_TEXT_GOLD : new Color(0.85f, 0.25f, 0.25f, 1f);
-        borderSR.sortingOrder = 200;
+        borderSR.sortingOrder = 500;
 
         CircleCollider2D col = go.AddComponent<CircleCollider2D>();
         col.enabled = false;
@@ -222,13 +241,22 @@ public class TokenSystem : MonoBehaviour
         scaleTxt.text = activeToken.transform.localScale.x.ToString("F2") + "x";
         y -= 25f;
 
-        // MÁGICA: Slider Logarítmico. Transforma a barra de 0 a 1 numa curva de 0.01 a 10.0!
-        float startT = Mathf.Log(activeToken.transform.localScale.x / 0.01f, 1000f);
+        // --- CORREÇÃO: Slider com interpolação dupla ---
+        // Garante que o tamanho ideal (0.31) fique EXATAMENTE no meio da barra (0.5),
+        // facilitando muito a seleção de tamanhos pequenos, com extremos de 0.01 e 20.0
+        float currentScale = activeToken.transform.localScale.x;
+        float startT = currentScale <= 0.31f
+            ? Mathf.InverseLerp(0.01f, 0.31f, currentScale) * 0.5f
+            : 0.5f + Mathf.InverseLerp(0.31f, 20.0f, currentScale) * 0.5f;
+
         Slider scaleSlider = VTTLayout.MakeSlider(contentRT, y, 24f, 0f, 1f, startT);
         scaleSlider.onValueChanged.AddListener((val) => {
             if (activeToken != null)
             {
-                float s = 0.01f * Mathf.Pow(1000f, val);
+                float s = val <= 0.5f
+                    ? Mathf.Lerp(0.01f, 0.31f, val * 2f)
+                    : Mathf.Lerp(0.31f, 20.0f, (val - 0.5f) * 2f);
+
                 activeToken.transform.localScale = new Vector3(s, s, 1f);
                 scaleTxt.text = s.ToString("F2") + "x";
                 activeToken.RevealFogIfEnabled();

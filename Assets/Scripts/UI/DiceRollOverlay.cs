@@ -518,7 +518,8 @@ public class DiceRollOverlay : MonoBehaviour
             StringBuilder sb = new StringBuilder();
             for (int i = 0; i < rollSides.Count; i++)
             {
-                sb.Append("D" + rollSides[i] + ":" + Random.Range(1, rollSides[i] + 1));
+                // CORREÇÃO: Uso inteligente do StringBuilder encadeado (sem '+' na memória)
+                sb.Append("D").Append(rollSides[i]).Append(":").Append(Random.Range(1, rollSides[i] + 1));
                 if (i < rollSides.Count - 1) sb.Append("  ");
             }
             _resultBreakdown.text = sb.ToString();
@@ -540,7 +541,7 @@ public class DiceRollOverlay : MonoBehaviour
             else if (val == 1) colHex = "#CF4040";
             else colHex = "#8AACCC";
 
-            brkSB.Append("<color=" + colHex + ">D" + sides + ":" + val + "</color>");
+            brkSB.Append("<color=").Append(colHex).Append(">D").Append(sides).Append(":").Append(val).Append("</color>");
             if (i < rollSides.Count - 1) brkSB.Append("  ");
         }
         _resultBreakdown.text = brkSB.ToString();
