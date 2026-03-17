@@ -232,7 +232,7 @@ public class CharacterCreatorScreen : MonoBehaviour
         dndRT.sizeDelta = new Vector2(1000f, 0);
         dndRT.anchoredPosition = new Vector2(-500f, 0);
 
-        float x = 20f; float y = -40f; float w = 700f;
+        float x = 20f; float y = -40f;
         Color cDnd = VTTLayout.C_TEXT_GOLD;
 
         VTTLayout.LabelFixed(dndRT, x, y, 960f, 20f, 12f, VTTLayout.C_TEXT_DIM, FontStyles.Normal, TextAlignmentOptions.BottomLeft).text = "NOME DO AVENTUREIRO";
@@ -328,7 +328,7 @@ public class CharacterCreatorScreen : MonoBehaviour
         ordemRT.sizeDelta = new Vector2(1000f, 0);
         ordemRT.anchoredPosition = new Vector2(-500f, 0);
 
-        float x = 20f; float y = -40f; float w = 700f;
+        float x = 20f; float y = -40f;
         Color cOrdem = new Color(0.85f, 0.25f, 0.25f, 1f);
 
         VTTLayout.LabelFixed(ordemRT, x, y, 960f, 20f, 12f, VTTLayout.C_TEXT_DIM, FontStyles.Normal, TextAlignmentOptions.BottomLeft).text = "NOME DO AGENTE";

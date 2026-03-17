@@ -1,8 +1,3 @@
-// ============================================================
-// TokenSystem.cs
-// Drag & Drop otimizado com cache de referências.
-// Limites de tamanho expandidos (0.01x a 20.0x) e lógica de névoa corrigida.
-// ============================================================
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
@@ -14,12 +9,15 @@ public class TokenController : MonoBehaviour
     public bool revealsFog = true;
     public SpriteRenderer borderRenderer;
 
+    [Header("Kinect Tracking")]
+    public int kinectTrackingId = -1;
+    private Vector3 _targetKinectPos;
+
     private Vector3 offset;
     private Vector3 dragStartMousePos;
     private int colorIdx = 0;
     private Color[] palette = { Color.white, new Color(0.85f, 0.2f, 0.2f), new Color(0.2f, 0.5f, 0.9f), new Color(0.2f, 0.8f, 0.3f), new Color(0.92f, 0.78f, 0.28f), Color.black };
 
-    // --- OTIMIZAÇÃO: Cache de Referências ---
     private MapController _mapController;
     private FogOfWarController _fogController;
     private Camera _mainCam;
@@ -42,7 +40,6 @@ public class TokenController : MonoBehaviour
         CircleCollider2D col = GetComponent<CircleCollider2D>();
         if (col != null) col.enabled = true;
 
-        // Ao soltar no mapa, volta para a camada abaixo da névoa
         if (_spriteRenderer != null) _spriteRenderer.sortingOrder = 41;
         if (borderRenderer != null) borderRenderer.sortingOrder = 40;
 
@@ -51,7 +48,6 @@ public class TokenController : MonoBehaviour
 
     public void RevealFogIfEnabled()
     {
-        // Garante que só limpa a névoa se já estiver fixado no tabuleiro
         if (isPlaced && revealsFog && _fogController != null)
         {
             _fogController.RevealByToken(transform.position, transform.localScale.x * 2.5f);
@@ -67,7 +63,7 @@ public class TokenController : MonoBehaviour
 
     void OnMouseDrag()
     {
-        if (!isPlaced) return; // Evita arrasto anômalo antes de fixar
+        if (!isPlaced) return;
 
         Vector3 newPos = _mainCam.ScreenToWorldPoint(Input.mousePosition) + offset;
         newPos.z = transform.position.z;
@@ -80,7 +76,6 @@ public class TokenController : MonoBehaviour
         }
         transform.position = newPos;
 
-        // Limpa a névoa ativamente em tempo real enquanto o token passa por cima
         RevealFogIfEnabled();
     }
 
@@ -98,16 +93,14 @@ public class TokenController : MonoBehaviour
         newPos.z = -5f;
         transform.position = newPos;
 
-        // Controle orgânico de escala via Scroll
         if (Input.mouseScrollDelta.y != 0)
         {
             float multiplier = Input.mouseScrollDelta.y > 0 ? 1.15f : 0.85f;
             float s = transform.localScale.x * multiplier;
-            s = Mathf.Clamp(s, 0.01f, 20.0f); // Limites expandidos
+            s = Mathf.Clamp(s, 0.01f, 20.0f);
             transform.localScale = new Vector3(s, s, 1f);
         }
 
-        // Ajuste de borda antes de colocar no mapa
         if (Input.GetMouseButtonDown(1)) CycleBorderColor();
     }
 
@@ -128,6 +121,13 @@ public class TokenController : MonoBehaviour
         }
         Destroy(gameObject);
         return false;
+    }
+
+    public void UpdatePositionFromKinect(Vector3 worldPos)
+    {
+        _targetKinectPos = new Vector3(worldPos.x, worldPos.y, transform.position.z);
+        transform.position = Vector3.Lerp(transform.position, _targetKinectPos, Time.deltaTime * 15f);
+        RevealFogIfEnabled();
     }
 }
 
@@ -166,7 +166,6 @@ public class TokenSystem : MonoBehaviour
         Texture2D tex = CharacterManager.Instance.LoadAvatar(record.avatarFileName);
         avatarSR.sprite = VTTLayout.CreateCircularWorldSprite(tex);
 
-        // --- CORREÇÃO: Passa por cima da névoa na primeira arrastada ---
         avatarSR.sortingOrder = 501;
 
         GameObject borderGO = new GameObject("Border");
@@ -241,9 +240,6 @@ public class TokenSystem : MonoBehaviour
         scaleTxt.text = activeToken.transform.localScale.x.ToString("F2") + "x";
         y -= 25f;
 
-        // --- CORREÇÃO: Slider com interpolação dupla ---
-        // Garante que o tamanho ideal (0.31) fique EXATAMENTE no meio da barra (0.5),
-        // facilitando muito a seleção de tamanhos pequenos, com extremos de 0.01 e 20.0
         float currentScale = activeToken.transform.localScale.x;
         float startT = currentScale <= 0.31f
             ? Mathf.InverseLerp(0.01f, 0.31f, currentScale) * 0.5f

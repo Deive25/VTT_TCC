@@ -1,18 +1,21 @@
-﻿// ============================================================
-// PlayerDisplaySystem.cs
-// Correção de Bug (Race Condition): Tela agora é inicializada de 
-// forma atrasada no Start() para proteger as outras UIs do projeto.
-// Foco Automático do Mapa ao abrir a janela.
-// ============================================================
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using TMPro;
 using System.Collections;
 
+public enum VTTMode
+{
+    Digital_Sync,
+    Physical_Table
+}
+
 public class PlayerDisplaySystem : MonoBehaviour
 {
     public static PlayerDisplaySystem Instance { get; private set; }
+
+    [Header("Modo de Operação")]
+    public VTTMode currentMode = VTTMode.Digital_Sync;
 
     public Camera playerCam;
     private RenderTexture playerViewTex;
@@ -42,8 +45,6 @@ public class PlayerDisplaySystem : MonoBehaviour
 
     private void Start()
     {
-        // SOLUÇÃO DO BUG: Atrasar 1 frame garante que o GMUIController e
-        // outros painéis não se fundem com a tela do projetor acidentalmente!
         StartCoroutine(DelayedSetup());
     }
 
@@ -71,7 +72,7 @@ public class PlayerDisplaySystem : MonoBehaviour
         Camera.main.cullingMask &= ~(1 << 4);
 
         GameObject canvasGO = new GameObject("PlayerCanvas");
-        canvasGO.layer = 0; // Garante que a câmera do projetor consiga ler os dados!
+        canvasGO.layer = 0;
         Canvas playerCanvas = canvasGO.AddComponent<Canvas>();
         playerCanvas.renderMode = RenderMode.ScreenSpaceCamera;
         playerCanvas.worldCamera = playerCam;
@@ -82,7 +83,7 @@ public class PlayerDisplaySystem : MonoBehaviour
         cs.referenceResolution = new Vector2(1920, 1080);
 
         GameObject textGO = new GameObject("DiceText");
-        textGO.layer = 0; // Textos ficam visíveis sem conflito com o MainCanvas
+        textGO.layer = 0;
         textGO.transform.SetParent(canvasGO.transform, false);
         diceText = textGO.AddComponent<TextMeshProUGUI>();
         diceText.fontSize = 80;
@@ -103,7 +104,6 @@ public class PlayerDisplaySystem : MonoBehaviour
 
     private void BuildFloatingWindow()
     {
-        // Procura explicitamente pelo painel mestre para se ancorar
         GameObject mainCanvasGO = GameObject.Find("MainCanvas");
         Canvas cv = null;
         if (mainCanvasGO != null) cv = mainCanvasGO.GetComponent<Canvas>();
@@ -268,8 +268,7 @@ public class PlayerDisplaySystem : MonoBehaviour
         floatingWindow.SetActive(true);
         floatingWindow.transform.SetAsLastSibling();
 
-        // SOLUÇÃO DO BUG: Força a focar o mapa limpo quando se abre a janela pela 1ª vez
-        if (!isLinkedToGM) FocusFullMap();
+        if (!isLinkedToGM || currentMode == VTTMode.Physical_Table) FocusFullMap();
     }
 
     public void CloseWindow() => floatingWindow.SetActive(false);
@@ -305,7 +304,14 @@ public class PlayerDisplaySystem : MonoBehaviour
 
     private void LateUpdate()
     {
-        if (isLinkedToGM) SyncAndClampCamera();
+        if (currentMode == VTTMode.Digital_Sync)
+        {
+            if (isLinkedToGM) SyncAndClampCamera();
+        }
+        else if (currentMode == VTTMode.Physical_Table)
+        {
+            FocusFullMap();
+        }
     }
 
     private void SyncAndClampCamera()

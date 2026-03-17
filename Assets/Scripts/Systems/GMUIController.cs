@@ -1,13 +1,8 @@
-// ============================================================
-// GMUIController.cs
-// Correção Definitiva:
-// 1. Painel Direito visível (Máscara corrigida e largura responsiva).
-// 2. Sistema Blindado Anti-Race Condition (Ignora o PlayerCanvas).
-// ============================================================
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using TMPro;
+using UnityEngine.InputSystem;
 
 public class GMUIController : MonoBehaviour
 {
@@ -87,16 +82,32 @@ public class GMUIController : MonoBehaviour
     private void Update()
     {
         SyncZoom(); SyncMouseCoord(); SyncFogState();
+
+        // Código atualizado para o New Input System
+        if (Keyboard.current != null && Keyboard.current.f11Key.wasPressedThisFrame)
+        {
+            ToggleWindowMode();
+        }
+    }
+
+    public void ToggleWindowMode()
+    {
+        if (Screen.fullScreenMode == FullScreenMode.Windowed)
+        {
+            Screen.SetResolution(Display.main.systemWidth, Display.main.systemHeight, FullScreenMode.FullScreenWindow);
+        }
+        else
+        {
+            Screen.SetResolution(1280, 720, FullScreenMode.Windowed);
+        }
     }
 
     private void BuildUI()
     {
-        // --- SOLUÇÃO DO BUG: Procura Inteligente e Segura de Canvas ---
-        // Garante que o menu do Mestre NUNCA é desenhado no Projetor/PlayerCanvas.
         Canvas cv = GetComponent<Canvas>();
         if (cv == null)
         {
-            Canvas[] allCanvas = FindObjectsOfType<Canvas>();
+            Canvas[] allCanvas = Object.FindObjectsByType<Canvas>(FindObjectsSortMode.None);
             foreach (var c in allCanvas)
             {
                 if (c.gameObject.name != "PlayerCanvas")
@@ -129,8 +140,6 @@ public class GMUIController : MonoBehaviour
         scrollRT.anchoredPosition = Vector2.zero;
         scroll.movementType = ScrollRect.MovementType.Clamped;
 
-        // (A linha problemática do Color.clear foi removida para a máscara funcionar corretamente)
-
         float y = 0f;
         y = DrawPanelHeader(p, y, "TELA DO MESTRE");
         y = DrawSecHeader(p, y, "TELA DOS JOGADORES"); y = DrawPlayerScreenSection(p, y);
@@ -139,7 +148,6 @@ public class GMUIController : MonoBehaviour
         y = DrawSecHeader(p, y, "NEVOA DE GUERRA"); y = DrawFogSection(p, y);
         y = DrawSecHeader(p, y, "INFORMACOES"); y = DrawInfoSection(p, y);
 
-        // --- SOLUÇÃO DO BUG DO PAINEL FANTASMA: Largura redefinida para 0f ---
         p.sizeDelta = new Vector2(0f, Mathf.Abs(y) + PAD);
     }
 
@@ -152,8 +160,14 @@ public class GMUIController : MonoBehaviour
         y = DrawPanelHeader(p, y, "RECURSOS");
 
         y = DrawSecHeader(p, y, "GERENCIAMENTO");
+
         VTTLayout.BtnFull(p, y, BH, -PAD * 2f, "ABRIR DASHBOARD", VTTLayout.C_BTN_PRI, VTTLayout.C_BDR_ACC, VTTLayout.C_TEXT, VTTLayout.F_BTN).onClick.AddListener(() => {
             DashboardOverlay d = FindAnyObjectByType<DashboardOverlay>(); if (d != null) d.OpenPanel();
+        });
+        y -= BH + GAP; 
+
+        VTTLayout.BtnFull(p, y, BH, -PAD * 2f, "TELA CHEIA / JANELA", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, VTTLayout.F_BTN, false).onClick.AddListener(() => {
+            ToggleWindowMode();
         });
         y -= BH + SGAP;
 
@@ -199,6 +213,27 @@ public class GMUIController : MonoBehaviour
         VTTLayout.BtnFull(p, y, BH, -PAD * 2f, "ABRIR JANELA FLUTUANTE", VTTLayout.C_BTN_PRI, VTTLayout.C_BDR_ACC, VTTLayout.C_TEXT, 11f).onClick.AddListener(() => {
             if (PlayerDisplaySystem.Instance != null) PlayerDisplaySystem.Instance.OpenWindow();
         });
+        y -= BH + GAP;
+
+        Button modeBtn = VTTLayout.BtnFull(p, y, BH, -PAD * 2f, "MODO ATUAL: DIGITAL", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, 10f, bold: true);
+        modeBtn.onClick.AddListener(() => {
+            if (PlayerDisplaySystem.Instance != null)
+            {
+                bool isPhysical = PlayerDisplaySystem.Instance.currentMode == VTTMode.Physical_Table;
+                PlayerDisplaySystem.Instance.currentMode = isPhysical ? VTTMode.Digital_Sync : VTTMode.Physical_Table;
+
+                bool isNowPhysical = PlayerDisplaySystem.Instance.currentMode == VTTMode.Physical_Table;
+                modeBtn.GetComponentInChildren<TMP_Text>().text = isNowPhysical ? "MODO ATUAL: MESA FÍSICA (KINECT)" : "MODO ATUAL: DIGITAL";
+                VTTLayout.SetBtnColor(modeBtn, isNowPhysical ? VTTLayout.C_BTN_ACTIVE : VTTLayout.C_BTN_SEC);
+            }
+        });
+
+        if (PlayerDisplaySystem.Instance != null)
+        {
+            bool isPhysicalInit = PlayerDisplaySystem.Instance.currentMode == VTTMode.Physical_Table;
+            modeBtn.GetComponentInChildren<TMP_Text>().text = isPhysicalInit ? "MODO ATUAL: MESA FÍSICA (KINECT)" : "MODO ATUAL: DIGITAL";
+            VTTLayout.SetBtnColor(modeBtn, isPhysicalInit ? VTTLayout.C_BTN_ACTIVE : VTTLayout.C_BTN_SEC);
+        }
         y -= BH + GAP;
 
         float hw = (W_RIGHT - PAD * 2f - GAP) * 0.5f;

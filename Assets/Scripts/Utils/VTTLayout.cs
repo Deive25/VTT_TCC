@@ -141,7 +141,11 @@ public static class VTTLayout
 
         TMP_Text textComp = textGO.AddComponent<TextMeshProUGUI>();
         textComp.fontSize = fontSize; textComp.color = textColor; textComp.fontStyle = style;
-        textComp.alignment = TextAlignmentOptions.MidlineLeft; textComp.enableWordWrapping = false; textComp.extraPadding = true;
+
+        // --- CORREÇÃO AQUI (Removido enableWordWrapping obsoleto) ---
+        textComp.alignment = TextAlignmentOptions.MidlineLeft;
+        textComp.textWrappingMode = TextWrappingModes.NoWrap;
+        textComp.extraPadding = true;
 
         input.textViewport = vpRT; input.textComponent = textComp; input.text = defaultText;
         input.customCaretColor = true; input.caretColor = textColor; input.caretWidth = 2; input.caretBlinkRate = 0.85f;
@@ -157,13 +161,15 @@ public static class VTTLayout
         return input;
     }
 
-    // --- NOVO: InputField Multiline (Para Inventário, História e Habilidades) ---
     public static TMP_InputField InputFieldMultiline(RectTransform parent, float x, float y, float w, float h, float fontSize, Color textColor, FontStyles style, string defaultText)
     {
         TMP_InputField input = InputFieldFixed(parent, x, y, w, h, fontSize, textColor, style, defaultText);
         input.lineType = TMP_InputField.LineType.MultiLineNewline;
         input.textComponent.alignment = TextAlignmentOptions.TopLeft;
-        input.textComponent.enableWordWrapping = true;
+
+        // --- CORREÇÃO AQUI (Removido enableWordWrapping obsoleto) ---
+        input.textComponent.textWrappingMode = TextWrappingModes.Normal;
+
         return input;
     }
 
@@ -317,8 +323,6 @@ public static class VTTLayout
         return avImg;
     }
 
-    // --- NOVO: Cria um Token circular 2D para o mapa! ---
-    // --- ATUALIZADO: Normaliza qualquer resolução para caber dentro da Borda! ---
     public static Sprite CreateCircularWorldSprite(Texture2D sourceTex)
     {
         if (sourceTex == null) return GetCircleSprite();
@@ -345,7 +349,6 @@ public static class VTTLayout
         }
         tex.SetPixels(finalPixels); tex.Apply();
 
-        // MATEMÁTICA CORRIGIDA: Força o PPU para que a imagem fique com o tamanho exato da borda
         float ppu = d / 2.56f;
         return Sprite.Create(tex, new Rect(0, 0, d, d), new Vector2(0.5f, 0.5f), ppu);
     }
@@ -355,8 +358,6 @@ public static class VTTLayout
     public static void Deco(RectTransform rt, Color color) { Deco(rt.gameObject, color); }
     private static TMP_Text TxtNode(GameObject go, float fontSize, Color color, FontStyles style, TextAlignmentOptions align) { TMP_Text t = go.AddComponent<TextMeshProUGUI>(); t.fontSize = fontSize; t.color = color; t.fontStyle = style; t.alignment = align; t.raycastTarget = false; return t; }
 }
-
-
 
 public class ButtonFeedback : MonoBehaviour, IPointerDownHandler, IPointerUpHandler, IPointerEnterHandler, IPointerExitHandler
 {

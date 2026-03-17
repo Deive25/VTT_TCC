@@ -1,15 +1,8 @@
-// ============================================================
-// MapFileLoader.cs
-// ============================================================
 using System.Collections;
 using System.IO;
+using System.Runtime.InteropServices;
 using UnityEngine;
 using UnityEngine.Networking;
-
-#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
-using System.Threading;
-using System.Windows.Forms;
-#endif
 
 public class MapFileLoader : MonoBehaviour
 {
@@ -18,64 +11,68 @@ public class MapFileLoader : MonoBehaviour
     private bool isLoading = false;
     private System.Action<Texture2D> pendingCallback = null;
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    public class OpenFileName
+    {
+        public int structSize = 0;
+        public System.IntPtr dlgOwner = System.IntPtr.Zero;
+        public System.IntPtr instance = System.IntPtr.Zero;
+        public string filter = null;
+        public string customFilter = null;
+        public int maxCustFilter = 0;
+        public int filterIndex = 0;
+        public string file = null;
+        public int maxFile = 0;
+        public string fileTitle = null;
+        public int maxFileTitle = 0;
+        public string initialDir = null;
+        public string title = null;
+        public int flags = 0;
+        public short fileOffset = 0;
+        public short fileExtension = 0;
+        public string defExt = null;
+        public System.IntPtr custData = System.IntPtr.Zero;
+        public System.IntPtr hook = System.IntPtr.Zero;
+        public string templateName = null;
+        public System.IntPtr reservedPtr = System.IntPtr.Zero;
+        public int reservedInt = 0;
+        public int flagsEx = 0;
+    }
+
+    [DllImport("Comdlg32.dll", SetLastError = true, ThrowOnUnmappableChar = true, CharSet = CharSet.Auto)]
+    public static extern bool GetOpenFileName([In, Out] OpenFileName ofn);
+
     private void Awake()
     {
         if (Instance == null) Instance = this;
         else Destroy(gameObject);
     }
 
-    // Se o callback for nulo, importa como Mapa Base. Se tiver callback, importa como Camada.
     public void OpenFilePicker(System.Action<Texture2D> onLoaded = null)
     {
         if (isLoading) return;
         pendingCallback = onLoaded;
 
-#if UNITY_EDITOR
-        string path = UnityEditor.EditorUtility.OpenFilePanel("Selecionar Imagem", "", "png,jpg,jpeg");
-        if (!string.IsNullOrEmpty(path)) StartCoroutine(LoadTextureRoutine(path));
-#elif UNITY_STANDALONE_WIN
-        OpenFilePickerWindows();
-#else
-        Debug.LogWarning("[MapFileLoader] File picker não disponível nesta plataforma.");
-#endif
-    }
+        OpenFileName ofn = new OpenFileName();
+        ofn.structSize = Marshal.SizeOf(ofn);
+        ofn.filter = "Imagens (*.jpg;*.jpeg;*.png)\0*.jpg;*.jpeg;*.png\0Todos os Arquivos (*.*)\0*.*\0";
+        ofn.file = new string(new char[256]);
+        ofn.maxFile = ofn.file.Length;
+        ofn.fileTitle = new string(new char[64]);
+        ofn.maxFileTitle = ofn.fileTitle.Length;
+        ofn.title = "Selecione uma Imagem";
+        ofn.flags = 0x00080000 | 0x00001000 | 0x00000008;
 
-#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
-    private string pendingFilePath = null;
-    private bool fileDialogCompleted = false;
-
-    private void OpenFilePickerWindows()
-    {
-        fileDialogCompleted = false;
-        pendingFilePath = null;
-
-        Thread t = new Thread(() =>
+        if (GetOpenFileName(ofn))
         {
-            OpenFileDialog dialog = new OpenFileDialog
-            {
-                Title = "Selecionar Imagem",
-                Filter = "Imagens|*.png;*.jpg;*.jpeg",
-                CheckFileExists = true
-            };
-
-            if (dialog.ShowDialog() == DialogResult.OK)
-                pendingFilePath = dialog.FileName;
-
-            fileDialogCompleted = true;
-        });
-
-        t.SetApartmentState(ApartmentState.STA);
-        t.Start();
-        StartCoroutine(WaitForWindowsDialog());
+            string selectedPath = ofn.file;
+            LoadFromPath(selectedPath, pendingCallback);
+        }
+        else
+        {
+            pendingCallback = null;
+        }
     }
-
-    private IEnumerator WaitForWindowsDialog()
-    {
-        while (!fileDialogCompleted) yield return null;
-        if (!string.IsNullOrEmpty(pendingFilePath)) 
-            yield return StartCoroutine(LoadTextureRoutine(pendingFilePath));
-    }
-#endif
 
     public void LoadFromPath(string filePath, System.Action<Texture2D> onLoaded = null)
     {
@@ -87,7 +84,7 @@ public class MapFileLoader : MonoBehaviour
     private IEnumerator LoadTextureRoutine(string filePath)
     {
         isLoading = true;
-        string url = "file://" + filePath;
+        string url = "file:///" + filePath.Replace("\\", "/");
 
         using (UnityWebRequest request = UnityWebRequestTexture.GetTexture(url))
         {
@@ -97,7 +94,6 @@ public class MapFileLoader : MonoBehaviour
             {
                 Texture2D texture = DownloadHandlerTexture.GetContent(request);
 
-                // Redireciona a textura carregada para onde foi pedida
                 if (pendingCallback != null)
                 {
                     pendingCallback.Invoke(texture);
