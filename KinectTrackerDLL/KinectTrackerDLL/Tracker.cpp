@@ -3,23 +3,51 @@
 #include <NuiApi.h>
 #include <iostream>
 #include <vector>
+#include <algorithm>
 #include <opencv2/opencv.hpp>
 
 using namespace std;
 using namespace cv;
 
 // ==========================================
-// ESTRUTURA DE MEMÓRIA (TRACKING)
+// ESTRUTURA DE MEMÓRIA (TRACKING VTT PRO)
 // ==========================================
 struct TrackedPiece {
-    int id;
-    Point position;
-    int framesMissing; // Há quantos frames a peça sumiu (ex: escondida pela mão)
+    int id = -1;
+    Point position = Point(0, 0);
+    int framesMissing = 0;
+    int framesVisible = 0;
+    bool isConfirmed = false;
 };
 
 vector<TrackedPiece> activePieces;
-int globalIdCounter = 1; // Para nunca repetir um ID
+
+int getAvailableId() {
+    int id = 1;
+    while (true) {
+        bool used = false;
+        for (const auto& p : activePieces) {
+            if (p.id == id) { used = true; break; }
+        }
+        if (!used) return id;
+        id++;
+    }
+}
+
+struct Match {
+    int pieceIdx;
+    int centroidIdx;
+    double dist;
+};
+
 // ==========================================
+// VARIÁVEIS DO KINECT
+// ==========================================
+bool isCalibrating = false;
+int calibFrameCount = 0;
+Mat bgAccumulator;
+Mat bgDepth;
+bool hasBackground = false;
 
 INuiSensor* sensor = nullptr;
 HANDLE depthStream;
@@ -27,9 +55,6 @@ HANDLE nextDepthFrameEvent;
 
 const int width = 640;
 const int height = 480;
-
-Mat bgDepth;
-bool hasBackground = false;
 
 bool InitKinect() {
     int numSensors = 0;
@@ -42,7 +67,6 @@ bool InitKinect() {
     nextDepthFrameEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
     if (FAILED(sensor->NuiImageStreamOpen(NUI_IMAGE_TYPE_DEPTH, NUI_IMAGE_RESOLUTION_640x480, 0, 2, nextDepthFrameEvent, &depthStream))) return false;
 
-    cout << "Kinect Inicializado com Sucesso!" << endl;
     return true;
 }
 
@@ -50,9 +74,9 @@ int main() {
     if (!InitKinect()) return -1;
 
     cout << "\n=======================================================" << endl;
-    cout << " CONTROLES DO TESTE DE VISAO (COM MEMORIA DE ID):" << endl;
-    cout << " Pressione 'B' - Gravar o fundo" << endl;
-    cout << " Pressione 'R' - Resetar IDs (Voltar para 1)" << endl;
+    cout << " SISTEMA VTT TRACKER (BLINDAGEM GEOMETRICA):" << endl;
+    cout << " Pressione 'B' - Calibrar Fundo (Mantenha a area vazia por 1s)" << endl;
+    cout << " Pressione 'R' - Limpar todas as pecas da memoria" << endl;
     cout << "=======================================================\n" << endl;
 
     while (true) {
@@ -68,7 +92,11 @@ int main() {
 
             if (lockedRect.Pitch != 0) {
                 const USHORT* curr = (const USHORT*)lockedRect.pBits;
+
                 Mat displayDepth(height, width, CV_8UC1);
+                Mat maskTokens(height, width, CV_8UC1, Scalar(0));
+                Mat maskHands(height, width, CV_8UC1, Scalar(0));
+                Mat coreMask(height, width, CV_8UC1, Scalar(0));
 
                 for (int i = 0; i < width * height; i++) {
                     USHORT depthInMm = curr[i] >> 3;
@@ -85,127 +113,196 @@ int main() {
                     }
                 }
 
-                Mat mask(height, width, CV_8UC1, Scalar(0));
                 Mat outputView;
                 cvtColor(displayDepth, outputView, COLOR_GRAY2BGR);
 
-                if (hasBackground) {
+                if (isCalibrating) {
+                    if (calibFrameCount == 0) bgAccumulator = Mat::zeros(height, width, CV_32FC1);
+
+                    Mat floatDepth;
+                    currentDepth.convertTo(floatDepth, CV_32FC1);
+                    accumulate(floatDepth, bgAccumulator);
+                    calibFrameCount++;
+
+                    putText(outputView, "CALIBRANDO: " + to_string(calibFrameCount) + "/30", Point(width / 2 - 100, height / 2), FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 0, 255), 2);
+
+                    if (calibFrameCount >= 30) {
+                        bgAccumulator.convertTo(bgDepth, CV_16UC1, 1.0 / 30.0);
+                        hasBackground = true;
+                        isCalibrating = false;
+                        cout << "[Aviso] Fundo gravado com media perfeita!" << endl;
+                    }
+                }
+
+                if (hasBackground && !isCalibrating) {
                     Mat diff;
                     absdiff(bgDepth, currentDepth, diff);
 
-                    // 1. LIMIARIZAÇÃO (Altura entre 15mm e 80mm)
                     for (int i = 0; i < width * height; i++) {
                         USHORT currD = currentDepth.at<USHORT>(i);
                         if (currD == 0) continue;
+
                         USHORT d = diff.at<USHORT>(i);
-                        if (d > 15 && d < 80) mask.at<uchar>(i) = 255;
+                        if (d >= 8 && d <= 100) maskTokens.at<uchar>(i) = 255;
+                        else if (d > 100 && d < 300) maskHands.at<uchar>(i) = 255;
                     }
 
-                    // 2. FILTRAGEM DE RUÍDO
-                    medianBlur(mask, mask, 5);
-                    Mat kernelErode = getStructuringElement(MORPH_ELLIPSE, Size(7, 7));
-                    erode(mask, mask, kernelErode);
-                    Mat kernelDilate = getStructuringElement(MORPH_ELLIPSE, Size(15, 15));
-                    dilate(mask, mask, kernelDilate);
+                    Mat handDilate = getStructuringElement(MORPH_ELLIPSE, Size(21, 21));
+                    dilate(maskHands, maskHands, handDilate);
+
+                    medianBlur(maskTokens, maskTokens, 3);
+                    Mat kernelOpen = getStructuringElement(MORPH_ELLIPSE, Size(3, 3));
+                    morphologyEx(maskTokens, maskTokens, MORPH_OPEN, kernelOpen);
+
+                    Mat distTransform;
+                    distanceTransform(maskTokens, distTransform, DIST_L2, 3);
+
+                    threshold(distTransform, coreMask, 3.0, 255, THRESH_BINARY);
+                    coreMask.convertTo(coreMask, CV_8UC1);
 
                     vector<vector<Point>> contours;
-                    findContours(mask, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+                    findContours(coreMask, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 
-                    // Lista de centróides detectados NESTE exato momento
                     vector<Point> currentCentroids;
 
+                    // ===============================================================
+                    // OS 3 CADEADOS DE GEOMETRIA (ANTI-MÃO E ANTI-DEDOS)
+                    // ===============================================================
                     for (size_t i = 0; i < contours.size(); i++) {
                         double area = contourArea(contours[i]);
 
-                        // Tamanho da peça
-                        if (area > 150.0 && area < 3500.0) {
+                        // 1. Limite de Área (Miolo não pode ser gigantesco como uma mão inteira)
+                        if (area > 3.0 && area < 1200.0) {
+                            Rect bbox = boundingRect(contours[i]);
 
-                            // 3. FÓRMULA DE CIRCULARIDADE (Destrói manchas deformadas e fantasmas)
-                            double perimeter = arcLength(contours[i], true);
-                            double circularity = 4 * CV_PI * (area / (perimeter * perimeter));
+                            // 2. Cadeado de Tamanho e Proporção (Anti-Braço e Anti-Dedo longo)
+                            // A caixa da peça não pode ter mais de 85 pixels.
+                            if (bbox.width < 85 && bbox.height < 85) {
+                                float aspect = (float)bbox.width / (float)bbox.height;
 
-                            // Se for maior que 0.65, o objeto é redondo/quadrado o suficiente!
-                            if (circularity > 0.65) {
-                                Moments m = moments(contours[i]);
-                                if (m.m00 > 0) {
-                                    int cx = m.m10 / m.m00;
-                                    int cy = m.m01 / m.m00;
-                                    currentCentroids.push_back(Point(cx, cy));
+                                // O objeto tem que ser relativamente quadrado/redondo (0.5 a 2.0)
+                                if (aspect > 0.5f && aspect < 2.0f) {
 
-                                    // Desenha o contorno real validado
-                                    drawContours(outputView, contours, (int)i, Scalar(0, 255, 0), 2);
+                                    // 3. Cadeado de Circularidade (Anti-borrões tortos)
+                                    double perimeter = arcLength(contours[i], true);
+                                    double circularity = (perimeter == 0) ? 0 : 4 * CV_PI * (area / (perimeter * perimeter));
+
+                                    if (circularity > 0.45) {
+                                        Moments m = moments(contours[i]);
+                                        if (m.m00 > 0) {
+                                            int cx = (int)(m.m10 / m.m00);
+                                            int cy = (int)(m.m01 / m.m00);
+                                            currentCentroids.push_back(Point(cx, cy));
+                                            drawContours(outputView, contours, (int)i, Scalar(150, 255, 150), -1);
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
 
-                    // ===============================================================
-                    // 4. LÓGICA DE RASTREAMENTO E MEMÓRIA (ID Persistente)
-                    // ===============================================================
-                    vector<bool> centroidUsed(currentCentroids.size(), false);
-
-                    // A. Tenta combinar as peças antigas com as peças que estamos vendo agora
-                    for (auto& piece : activePieces) {
-                        int bestMatchIdx = -1;
-                        double minDistance = 100000; // Começa com um valor bem alto
-
-                        for (size_t i = 0; i < currentCentroids.size(); i++) {
-                            if (centroidUsed[i]) continue; // Se esse ponto já tem dono, pula
-
-                            // Calcula a distância entre a peça velha e a posição nova
-                            double dist = norm(piece.position - currentCentroids[i]);
-
-                            // Se a peça andou no máximo 80 pixels de distância (para não roubar peça dos outros)
-                            if (dist < 80.0 && dist < minDistance) {
-                                minDistance = dist;
-                                bestMatchIdx = i;
-                            }
-                        }
-
-                        if (bestMatchIdx != -1) {
-                            // Achou a peça! Atualiza a posição e zera o tempo de sumiço
-                            piece.position = currentCentroids[bestMatchIdx];
-                            piece.framesMissing = 0;
-                            centroidUsed[bestMatchIdx] = true;
-
-                            // Desenha na tela
-                            circle(outputView, piece.position, 4, Scalar(0, 0, 255), -1);
-                            putText(outputView, "ID:" + to_string(piece.id), Point(piece.position.x + 10, piece.position.y), FONT_HERSHEY_SIMPLEX, 0.5, Scalar(255, 255, 0), 2);
-                        }
-                        else {
-                            // Não achou a peça (A mão deve estar em cima!). Aumenta o tempo de sumiço.
-                            piece.framesMissing++;
+                    vector<Match> matches;
+                    for (int p = 0; p < (int)activePieces.size(); p++) {
+                        for (int c = 0; c < (int)currentCentroids.size(); c++) {
+                            double d = norm(activePieces[p].position - currentCentroids[c]);
+                            matches.push_back({ p, c, d });
                         }
                     }
 
-                    // B. Se sobrou alguma mancha nova sem dono, é uma PEÇA NOVA na mesa!
-                    for (size_t i = 0; i < currentCentroids.size(); i++) {
-                        if (!centroidUsed[i]) {
+                    sort(matches.begin(), matches.end(), [](const Match& a, const Match& b) {
+                        return a.dist < b.dist;
+                        });
+
+                    vector<bool> pieceMatched(activePieces.size(), false);
+                    vector<bool> centroidMatched(currentCentroids.size(), false);
+
+                    for (const auto& m : matches) {
+                        if (!pieceMatched[m.pieceIdx] && !centroidMatched[m.centroidIdx]) {
+                            if (activePieces[m.pieceIdx].framesMissing == 0 && m.dist < 40.0) {
+                                activePieces[m.pieceIdx].position = currentCentroids[m.centroidIdx];
+                                activePieces[m.pieceIdx].framesVisible++;
+                                if (!activePieces[m.pieceIdx].isConfirmed && activePieces[m.pieceIdx].framesVisible > 10) {
+                                    activePieces[m.pieceIdx].isConfirmed = true;
+                                    activePieces[m.pieceIdx].id = getAvailableId();
+                                }
+                                pieceMatched[m.pieceIdx] = true;
+                                centroidMatched[m.centroidIdx] = true;
+                            }
+                        }
+                    }
+
+                    for (const auto& m : matches) {
+                        if (!pieceMatched[m.pieceIdx] && !centroidMatched[m.centroidIdx]) {
+                            if (activePieces[m.pieceIdx].framesMissing > 0 && m.dist < 150.0) {
+                                activePieces[m.pieceIdx].position = currentCentroids[m.centroidIdx];
+                                activePieces[m.pieceIdx].framesMissing = 0;
+                                activePieces[m.pieceIdx].framesVisible++;
+                                pieceMatched[m.pieceIdx] = true;
+                                centroidMatched[m.centroidIdx] = true;
+                            }
+                        }
+                    }
+
+                    for (int p = 0; p < (int)activePieces.size(); p++) {
+                        if (!pieceMatched[p]) {
+                            if (activePieces[p].position.x >= 0 && activePieces[p].position.x < width &&
+                                activePieces[p].position.y >= 0 && activePieces[p].position.y < height) {
+
+                                if (maskHands.at<uchar>(activePieces[p].position.y, activePieces[p].position.x) == 255) {
+                                    if (activePieces[p].framesMissing > 5 && activePieces[p].framesMissing < 120) {
+                                        activePieces[p].framesMissing = 5;
+                                        circle(outputView, activePieces[p].position, 12, Scalar(200, 100, 255), 2);
+                                    }
+                                    else {
+                                        activePieces[p].framesMissing++;
+                                    }
+                                }
+                                else {
+                                    activePieces[p].framesMissing++;
+                                }
+                            }
+                            else {
+                                activePieces[p].framesMissing++;
+                            }
+                        }
+                    }
+
+                    for (size_t c = 0; c < currentCentroids.size(); c++) {
+                        if (!centroidMatched[c]) {
                             TrackedPiece newPiece;
-                            newPiece.id = globalIdCounter++;
-                            newPiece.position = currentCentroids[i];
+                            newPiece.id = -1;
+                            newPiece.position = currentCentroids[c];
                             newPiece.framesMissing = 0;
+                            newPiece.framesVisible = 1;
+                            newPiece.isConfirmed = false;
                             activePieces.push_back(newPiece);
                         }
                     }
 
-                    // C. Faxina: Remove da memória peças que sumiram por mais de 45 frames (1.5 segundos)
                     activePieces.erase(remove_if(activePieces.begin(), activePieces.end(),
-                        [](const TrackedPiece& p) { return p.framesMissing > 45; }), activePieces.end());
+                        [](const TrackedPiece& p) {
+                            if (!p.isConfirmed && p.framesMissing > 2) return true;
+                            return p.framesMissing > 90;
+                        }), activePieces.end());
 
-                    // Conta apenas as peças ativas na mesa que não estão escondidas
                     int piecesOnTable = 0;
-                    for (const auto& p : activePieces) if (p.framesMissing == 0) piecesOnTable++;
+                    for (const auto& p : activePieces) {
+                        if (p.framesMissing == 0 && p.isConfirmed) {
+                            piecesOnTable++;
+                            circle(outputView, p.position, 6, Scalar(0, 0, 255), -1);
+                            putText(outputView, "ID:" + to_string(p.id), Point(p.position.x + 10, p.position.y), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(255, 255, 0), 2);
+                        }
+                    }
 
-                    putText(outputView, "Pecas na mesa: " + to_string(piecesOnTable), Point(10, 20), FONT_HERSHEY_SIMPLEX, 0.5, Scalar(0, 255, 255), 2);
+                    putText(outputView, "Pecas validadas: " + to_string(piecesOnTable), Point(10, 20), FONT_HERSHEY_SIMPLEX, 0.5, Scalar(0, 255, 255), 2);
                 }
-                else {
-                    putText(outputView, "APERTE 'B' PARA GRAVAR O FUNDO", Point(10, 20), FONT_HERSHEY_SIMPLEX, 0.4, Scalar(0, 0, 255), 1);
+                else if (!isCalibrating) {
+                    putText(outputView, "APERTE 'B' PARA CALIBRAR O FUNDO", Point(10, 20), FONT_HERSHEY_SIMPLEX, 0.4, Scalar(0, 0, 255), 1);
                 }
 
-                imshow("1. Profundidade Bruta (Kinect)", displayDepth);
-                imshow("2. Mascara (Subtracao de Fundo)", mask);
-                imshow("3. Resultado Final (Rastreamento)", outputView);
+                imshow("1. Profundidade", displayDepth);
+                imshow("2. Mascara (Miolos Separados)", coreMask);
+                imshow("3. Resultado Final", outputView);
             }
 
             texture->UnlockRect(0);
@@ -215,15 +312,12 @@ int main() {
         char key = (char)waitKey(30);
         if (key == 27) break;
         if (key == 'b' || key == 'B') {
-            bgDepth = currentDepth.clone();
-            hasBackground = true;
-            activePieces.clear(); // Limpa as peças da memória ao recalibrar
-            globalIdCounter = 1;
+            isCalibrating = true;
+            calibFrameCount = 0;
+            activePieces.clear();
         }
         if (key == 'r' || key == 'R') {
-            // Tecla de pânico para resetar a contagem para 1
             activePieces.clear();
-            globalIdCounter = 1;
         }
     }
 
