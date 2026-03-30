@@ -77,7 +77,7 @@ int main() {
     if (!InitKinect()) return -1;
 
     cout << "\n=======================================================" << endl;
-    cout << " SISTEMA VTT TRACKER (PERSISTENCIA E VINCULACAO):" << endl;
+    cout << " SISTEMA VTT TRACKER (SEPARACAO DE 5MM E FANTASMAS VISUAIS):" << endl;
     cout << " Pressione 'B' - Calibrar Fundo (Mantenha a area vazia por 1s)" << endl;
     cout << " Pressione 'R' - Limpar todas as pecas da memoria" << endl;
     cout << "=======================================================\n" << endl;
@@ -162,13 +162,14 @@ int main() {
                     // ===============================================================
                     medianBlur(maskTokens, maskTokens, 3);
 
+                    // Um leve erode ajuda a cortar pontes de luz ainda mais rápido
                     Mat kernelErode = getStructuringElement(MORPH_ELLIPSE, Size(3, 3));
                     erode(maskTokens, maskTokens, kernelErode);
 
                     Mat distTransform;
                     distanceTransform(maskTokens, distTransform, DIST_L2, 3);
 
-                    // Threshold em 4.0: Exige um "miolo" profundo, quebrando a fusão de 5mm.
+                    // THRESHOLD EM 4.0: Exige um miolo forte. Corta a luz entre peças a 5mm de distância.
                     threshold(distTransform, coreMask, 4.0, 255, THRESH_BINARY);
                     coreMask.convertTo(coreMask, CV_8UC1);
 
@@ -177,15 +178,18 @@ int main() {
 
                     vector<Point> currentCentroids;
 
-                    // Filtros Geométricos
+                    // ===============================================================
+                    // CADEADOS GEOMÉTRICOS (ANTI-MÃO DEITADA E ANTI-DEDOS)
+                    // ===============================================================
                     for (size_t i = 0; i < contours.size(); i++) {
                         double area = contourArea(contours[i]);
 
+                        // Área compensada: como o threshold é alto (4.0), o miolo fica menor. Aceita > 5.0
                         if (area > 5.0 && area < 1500.0) {
                             Rect bbox = boundingRect(contours[i]);
                             float aspect = (float)bbox.width / (float)bbox.height;
 
-                            // Anti-Mãos deitadas e pulsos
+                            // A proporção tem que ser razoável (ignora braços compridos ou dedos longos)
                             if (aspect > 0.4f && aspect < 2.5f) {
                                 Moments m = moments(contours[i]);
                                 if (m.m00 > 0) {
@@ -200,7 +204,7 @@ int main() {
                     }
 
                     // ===============================================================
-                    // MATRIZ DE CUSTO E DISTRIBUIÇÃO
+                    // MATRIZ DE CUSTO
                     // ===============================================================
                     vector<Match> matches;
                     for (int p = 0; p < (int)activePieces.size(); p++) {
@@ -217,9 +221,10 @@ int main() {
                     vector<bool> pieceMatched(activePieces.size(), false);
                     vector<bool> centroidMatched(currentCentroids.size(), false);
 
-                    // Passagem 1: Peças visíveis e paradas
+                    // Passagem 1: Peças visíveis e paradas (Tranca o ID no lugar)
                     for (const auto& m : matches) {
                         if (!pieceMatched[m.pieceIdx] && !centroidMatched[m.centroidIdx]) {
+
                             double maxDist = (activePieces[m.pieceIdx].framesMissing > 0) ? 150.0 : 40.0;
 
                             if (m.dist < maxDist) {
@@ -239,7 +244,7 @@ int main() {
                         }
                     }
 
-                    // Passagem 2: Peças perdidas que retornaram
+                    // Passagem 2: Procura as peças perdidas (Recupera o ID na mão)
                     for (const auto& m : matches) {
                         if (!pieceMatched[m.pieceIdx] && !centroidMatched[m.centroidIdx]) {
                             if (activePieces[m.pieceIdx].framesMissing > 0 && m.dist < 150.0) {
@@ -253,7 +258,7 @@ int main() {
                     }
 
                     // ===============================================================
-                    // GERENCIAMENTO DE OCLUSÃO COM TIMEOUT
+                    // OCLUSÃO E TIMEOUT (PROTEGE A MEMÓRIA DE TRAVAR)
                     // ===============================================================
                     for (int p = 0; p < (int)activePieces.size(); p++) {
                         if (!pieceMatched[p]) {
@@ -263,9 +268,10 @@ int main() {
                                 if (maskHands.at<uchar>(activePieces[p].position.y, activePieces[p].position.x) == 255) {
                                     activePieces[p].framesOccluded++;
 
+                                    // Timeout de 5 Segundos para a mão em cima
                                     if (activePieces[p].framesOccluded < 150) {
                                         if (activePieces[p].framesMissing > 5) activePieces[p].framesMissing = 5;
-                                        // Círculo roxo (Mão Segurando)
+                                        // Marca roxa visual quando a mão cobre
                                         circle(outputView, activePieces[p].position, 12, Scalar(200, 100, 255), 2);
                                     }
                                     else {
@@ -284,7 +290,7 @@ int main() {
                         }
                     }
 
-                    // Novos fantasmas (Ainda não confirmados)
+                    // Novos fantasmas
                     for (size_t c = 0; c < currentCentroids.size(); c++) {
                         if (!centroidMatched[c]) {
                             TrackedPiece newPiece;
@@ -298,7 +304,7 @@ int main() {
                         }
                     }
 
-                    // Faxina de memória (90 frames = 3 Segundos de persistência)
+                    // Faxina de memória (90 frames = 3 Segundos exatos!)
                     activePieces.erase(remove_if(activePieces.begin(), activePieces.end(),
                         [](const TrackedPiece& p) {
                             if (!p.isConfirmed && p.framesMissing > 0) return true;
@@ -312,13 +318,13 @@ int main() {
                     for (const auto& p : activePieces) {
                         if (p.isConfirmed) {
                             if (p.framesMissing == 0) {
-                                // PEÇA ATIVA (Vermelho Sólido)
+                                // PEÇA ATIVA E VISTA PELO KINECT (Vermelho Sólido)
                                 piecesOnTable++;
                                 circle(outputView, p.position, 6, Scalar(0, 0, 255), -1);
                                 putText(outputView, "ID:" + to_string(p.id), Point(p.position.x + 10, p.position.y), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(255, 255, 0), 2);
                             }
                             else {
-                                // PEÇA PERDIDA / FANTASMA ESPERANDO (Amarelo Vazado)
+                                // PEÇA PERDIDA / FANTASMA (Amarelo Vazado)
                                 circle(outputView, p.position, 8, Scalar(0, 255, 255), 2);
                                 putText(outputView, "ID:" + to_string(p.id) + " (LOST)", Point(p.position.x + 10, p.position.y), FONT_HERSHEY_SIMPLEX, 0.5, Scalar(0, 150, 255), 1);
                             }
