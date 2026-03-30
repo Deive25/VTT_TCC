@@ -17,6 +17,7 @@ struct TrackedPiece {
     Point position = Point(0, 0);
     int framesMissing = 0;
     int framesVisible = 0;
+    int framesOccluded = 0;
     bool isConfirmed = false;
 };
 
@@ -74,7 +75,7 @@ int main() {
     if (!InitKinect()) return -1;
 
     cout << "\n=======================================================" << endl;
-    cout << " SISTEMA VTT TRACKER (BLINDAGEM GEOMETRICA):" << endl;
+    cout << " SISTEMA VTT TRACKER (SEPARACAO EXTREMA DE 5mm):" << endl;
     cout << " Pressione 'B' - Calibrar Fundo (Mantenha a area vazia por 1s)" << endl;
     cout << " Pressione 'R' - Limpar todas as pecas da memoria" << endl;
     cout << "=======================================================\n" << endl;
@@ -138,6 +139,7 @@ int main() {
                     Mat diff;
                     absdiff(bgDepth, currentDepth, diff);
 
+                    // Fatiamento 
                     for (int i = 0; i < width * height; i++) {
                         USHORT currD = currentDepth.at<USHORT>(i);
                         if (currD == 0) continue;
@@ -150,14 +152,19 @@ int main() {
                     Mat handDilate = getStructuringElement(MORPH_ELLIPSE, Size(21, 21));
                     dilate(maskHands, maskHands, handDilate);
 
+                    // ===============================================================
+                    // DISTANCE TRANSFORM (AJUSTE FINO DE 5mm)
+                    // ===============================================================
                     medianBlur(maskTokens, maskTokens, 3);
-                    Mat kernelOpen = getStructuringElement(MORPH_ELLIPSE, Size(3, 3));
-                    morphologyEx(maskTokens, maskTokens, MORPH_OPEN, kernelOpen);
+
+                    Mat kernelErode = getStructuringElement(MORPH_ELLIPSE, Size(3, 3));
+                    erode(maskTokens, maskTokens, kernelErode);
 
                     Mat distTransform;
                     distanceTransform(maskTokens, distTransform, DIST_L2, 3);
 
-                    threshold(distTransform, coreMask, 3.0, 255, THRESH_BINARY);
+                    // Threshold em 4.0: Exige um "miolo" mais profundo, quebrando a fusão de 5mm.
+                    threshold(distTransform, coreMask, 4.0, 255, THRESH_BINARY);
                     coreMask.convertTo(coreMask, CV_8UC1);
 
                     vector<vector<Point>> contours;
@@ -165,42 +172,31 @@ int main() {
 
                     vector<Point> currentCentroids;
 
-                    // ===============================================================
-                    // OS 3 CADEADOS DE GEOMETRIA (ANTI-MÃO E ANTI-DEDOS)
-                    // ===============================================================
                     for (size_t i = 0; i < contours.size(); i++) {
                         double area = contourArea(contours[i]);
 
-                        // 1. Limite de Área (Miolo não pode ser gigantesco como uma mão inteira)
-                        if (area > 3.0 && area < 1200.0) {
+                        // Compensação: Como o miolo ficou menor, aceitamos áreas a partir de 5.0 píxeis
+                        if (area > 5.0 && area < 1500.0) {
+
                             Rect bbox = boundingRect(contours[i]);
+                            float aspect = (float)bbox.width / (float)bbox.height;
 
-                            // 2. Cadeado de Tamanho e Proporção (Anti-Braço e Anti-Dedo longo)
-                            // A caixa da peça não pode ter mais de 85 pixels.
-                            if (bbox.width < 85 && bbox.height < 85) {
-                                float aspect = (float)bbox.width / (float)bbox.height;
+                            if (aspect > 0.4f && aspect < 2.5f) {
+                                Moments m = moments(contours[i]);
+                                if (m.m00 > 0) {
+                                    int cx = (int)(m.m10 / m.m00);
+                                    int cy = (int)(m.m01 / m.m00);
+                                    currentCentroids.push_back(Point(cx, cy));
 
-                                // O objeto tem que ser relativamente quadrado/redondo (0.5 a 2.0)
-                                if (aspect > 0.5f && aspect < 2.0f) {
-
-                                    // 3. Cadeado de Circularidade (Anti-borrões tortos)
-                                    double perimeter = arcLength(contours[i], true);
-                                    double circularity = (perimeter == 0) ? 0 : 4 * CV_PI * (area / (perimeter * perimeter));
-
-                                    if (circularity > 0.45) {
-                                        Moments m = moments(contours[i]);
-                                        if (m.m00 > 0) {
-                                            int cx = (int)(m.m10 / m.m00);
-                                            int cy = (int)(m.m01 / m.m00);
-                                            currentCentroids.push_back(Point(cx, cy));
-                                            drawContours(outputView, contours, (int)i, Scalar(150, 255, 150), -1);
-                                        }
-                                    }
+                                    drawContours(outputView, contours, (int)i, Scalar(150, 255, 150), -1);
                                 }
                             }
                         }
                     }
 
+                    // ===============================================================
+                    // MATRIZ DE CUSTO (TWO-PASS MATCHING PARA NÃO ROUBAR ID)
+                    // ===============================================================
                     vector<Match> matches;
                     for (int p = 0; p < (int)activePieces.size(); p++) {
                         for (int c = 0; c < (int)currentCentroids.size(); c++) {
@@ -216,21 +212,29 @@ int main() {
                     vector<bool> pieceMatched(activePieces.size(), false);
                     vector<bool> centroidMatched(currentCentroids.size(), false);
 
+                    // Passagem 1: Peças visíveis e paradas
                     for (const auto& m : matches) {
                         if (!pieceMatched[m.pieceIdx] && !centroidMatched[m.centroidIdx]) {
-                            if (activePieces[m.pieceIdx].framesMissing == 0 && m.dist < 40.0) {
+                            double maxDist = (activePieces[m.pieceIdx].framesMissing > 0) ? 150.0 : 40.0;
+
+                            if (m.dist < maxDist) {
                                 activePieces[m.pieceIdx].position = currentCentroids[m.centroidIdx];
+                                activePieces[m.pieceIdx].framesMissing = 0;
+                                activePieces[m.pieceIdx].framesOccluded = 0;
                                 activePieces[m.pieceIdx].framesVisible++;
+
                                 if (!activePieces[m.pieceIdx].isConfirmed && activePieces[m.pieceIdx].framesVisible > 10) {
                                     activePieces[m.pieceIdx].isConfirmed = true;
                                     activePieces[m.pieceIdx].id = getAvailableId();
                                 }
+
                                 pieceMatched[m.pieceIdx] = true;
                                 centroidMatched[m.centroidIdx] = true;
                             }
                         }
                     }
 
+                    // Passagem 2: Peças perdidas que retornaram
                     for (const auto& m : matches) {
                         if (!pieceMatched[m.pieceIdx] && !centroidMatched[m.centroidIdx]) {
                             if (activePieces[m.pieceIdx].framesMissing > 0 && m.dist < 150.0) {
@@ -243,14 +247,19 @@ int main() {
                         }
                     }
 
+                    // ===============================================================
+                    // GERENCIAMENTO DE OCLUSÃO COM TIMEOUT
+                    // ===============================================================
                     for (int p = 0; p < (int)activePieces.size(); p++) {
                         if (!pieceMatched[p]) {
                             if (activePieces[p].position.x >= 0 && activePieces[p].position.x < width &&
                                 activePieces[p].position.y >= 0 && activePieces[p].position.y < height) {
 
                                 if (maskHands.at<uchar>(activePieces[p].position.y, activePieces[p].position.x) == 255) {
-                                    if (activePieces[p].framesMissing > 5 && activePieces[p].framesMissing < 120) {
-                                        activePieces[p].framesMissing = 5;
+                                    activePieces[p].framesOccluded++;
+
+                                    if (activePieces[p].framesOccluded < 150) {
+                                        if (activePieces[p].framesMissing > 5) activePieces[p].framesMissing = 5;
                                         circle(outputView, activePieces[p].position, 12, Scalar(200, 100, 255), 2);
                                     }
                                     else {
@@ -258,15 +267,18 @@ int main() {
                                     }
                                 }
                                 else {
+                                    activePieces[p].framesOccluded = 0;
                                     activePieces[p].framesMissing++;
                                 }
                             }
                             else {
+                                activePieces[p].framesOccluded = 0;
                                 activePieces[p].framesMissing++;
                             }
                         }
                     }
 
+                    // Novos fantasmas
                     for (size_t c = 0; c < currentCentroids.size(); c++) {
                         if (!centroidMatched[c]) {
                             TrackedPiece newPiece;
@@ -274,17 +286,20 @@ int main() {
                             newPiece.position = currentCentroids[c];
                             newPiece.framesMissing = 0;
                             newPiece.framesVisible = 1;
+                            newPiece.framesOccluded = 0;
                             newPiece.isConfirmed = false;
                             activePieces.push_back(newPiece);
                         }
                     }
 
+                    // Faxina da memória rigorosa
                     activePieces.erase(remove_if(activePieces.begin(), activePieces.end(),
                         [](const TrackedPiece& p) {
-                            if (!p.isConfirmed && p.framesMissing > 2) return true;
+                            if (!p.isConfirmed && p.framesMissing > 0) return true;
                             return p.framesMissing > 90;
                         }), activePieces.end());
 
+                    // HUD
                     int piecesOnTable = 0;
                     for (const auto& p : activePieces) {
                         if (p.framesMissing == 0 && p.isConfirmed) {
