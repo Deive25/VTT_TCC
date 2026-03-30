@@ -23,6 +23,7 @@ struct TrackedPiece {
 
 vector<TrackedPiece> activePieces;
 
+// Função inteligente que recicla os IDs
 int getAvailableId() {
     int id = 1;
     while (true) {
@@ -35,6 +36,7 @@ int getAvailableId() {
     }
 }
 
+// Estrutura para a Matriz de Custo
 struct Match {
     int pieceIdx;
     int centroidIdx;
@@ -75,7 +77,7 @@ int main() {
     if (!InitKinect()) return -1;
 
     cout << "\n=======================================================" << endl;
-    cout << " SISTEMA VTT TRACKER (SEPARACAO EXTREMA DE 5mm):" << endl;
+    cout << " SISTEMA VTT TRACKER (PERSISTENCIA E VINCULACAO):" << endl;
     cout << " Pressione 'B' - Calibrar Fundo (Mantenha a area vazia por 1s)" << endl;
     cout << " Pressione 'R' - Limpar todas as pecas da memoria" << endl;
     cout << "=======================================================\n" << endl;
@@ -117,6 +119,9 @@ int main() {
                 Mat outputView;
                 cvtColor(displayDepth, outputView, COLOR_GRAY2BGR);
 
+                // ===============================================================
+                // CALIBRAÇÃO DE FUNDO
+                // ===============================================================
                 if (isCalibrating) {
                     if (calibFrameCount == 0) bgAccumulator = Mat::zeros(height, width, CV_32FC1);
 
@@ -139,7 +144,7 @@ int main() {
                     Mat diff;
                     absdiff(bgDepth, currentDepth, diff);
 
-                    // Fatiamento 
+                    // Fatiamento (Tokens de 8mm a 10cm | Mãos acima de 10cm)
                     for (int i = 0; i < width * height; i++) {
                         USHORT currD = currentDepth.at<USHORT>(i);
                         if (currD == 0) continue;
@@ -163,7 +168,7 @@ int main() {
                     Mat distTransform;
                     distanceTransform(maskTokens, distTransform, DIST_L2, 3);
 
-                    // Threshold em 4.0: Exige um "miolo" mais profundo, quebrando a fusão de 5mm.
+                    // Threshold em 4.0: Exige um "miolo" profundo, quebrando a fusão de 5mm.
                     threshold(distTransform, coreMask, 4.0, 255, THRESH_BINARY);
                     coreMask.convertTo(coreMask, CV_8UC1);
 
@@ -172,15 +177,15 @@ int main() {
 
                     vector<Point> currentCentroids;
 
+                    // Filtros Geométricos
                     for (size_t i = 0; i < contours.size(); i++) {
                         double area = contourArea(contours[i]);
 
-                        // Compensação: Como o miolo ficou menor, aceitamos áreas a partir de 5.0 píxeis
                         if (area > 5.0 && area < 1500.0) {
-
                             Rect bbox = boundingRect(contours[i]);
                             float aspect = (float)bbox.width / (float)bbox.height;
 
+                            // Anti-Mãos deitadas e pulsos
                             if (aspect > 0.4f && aspect < 2.5f) {
                                 Moments m = moments(contours[i]);
                                 if (m.m00 > 0) {
@@ -195,7 +200,7 @@ int main() {
                     }
 
                     // ===============================================================
-                    // MATRIZ DE CUSTO (TWO-PASS MATCHING PARA NÃO ROUBAR ID)
+                    // MATRIZ DE CUSTO E DISTRIBUIÇÃO
                     // ===============================================================
                     vector<Match> matches;
                     for (int p = 0; p < (int)activePieces.size(); p++) {
@@ -260,6 +265,7 @@ int main() {
 
                                     if (activePieces[p].framesOccluded < 150) {
                                         if (activePieces[p].framesMissing > 5) activePieces[p].framesMissing = 5;
+                                        // Círculo roxo (Mão Segurando)
                                         circle(outputView, activePieces[p].position, 12, Scalar(200, 100, 255), 2);
                                     }
                                     else {
@@ -278,7 +284,7 @@ int main() {
                         }
                     }
 
-                    // Novos fantasmas
+                    // Novos fantasmas (Ainda não confirmados)
                     for (size_t c = 0; c < currentCentroids.size(); c++) {
                         if (!centroidMatched[c]) {
                             TrackedPiece newPiece;
@@ -292,20 +298,30 @@ int main() {
                         }
                     }
 
-                    // Faxina da memória rigorosa
+                    // Faxina de memória (90 frames = 3 Segundos de persistência)
                     activePieces.erase(remove_if(activePieces.begin(), activePieces.end(),
                         [](const TrackedPiece& p) {
                             if (!p.isConfirmed && p.framesMissing > 0) return true;
                             return p.framesMissing > 90;
                         }), activePieces.end());
 
-                    // HUD
+                    // ===============================================================
+                    // HUD E DESENHO (COM MEMÓRIA FANTASMA VISUAL)
+                    // ===============================================================
                     int piecesOnTable = 0;
                     for (const auto& p : activePieces) {
-                        if (p.framesMissing == 0 && p.isConfirmed) {
-                            piecesOnTable++;
-                            circle(outputView, p.position, 6, Scalar(0, 0, 255), -1);
-                            putText(outputView, "ID:" + to_string(p.id), Point(p.position.x + 10, p.position.y), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(255, 255, 0), 2);
+                        if (p.isConfirmed) {
+                            if (p.framesMissing == 0) {
+                                // PEÇA ATIVA (Vermelho Sólido)
+                                piecesOnTable++;
+                                circle(outputView, p.position, 6, Scalar(0, 0, 255), -1);
+                                putText(outputView, "ID:" + to_string(p.id), Point(p.position.x + 10, p.position.y), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(255, 255, 0), 2);
+                            }
+                            else {
+                                // PEÇA PERDIDA / FANTASMA ESPERANDO (Amarelo Vazado)
+                                circle(outputView, p.position, 8, Scalar(0, 255, 255), 2);
+                                putText(outputView, "ID:" + to_string(p.id) + " (LOST)", Point(p.position.x + 10, p.position.y), FONT_HERSHEY_SIMPLEX, 0.5, Scalar(0, 150, 255), 1);
+                            }
                         }
                     }
 
