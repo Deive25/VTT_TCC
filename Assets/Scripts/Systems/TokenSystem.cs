@@ -10,7 +10,7 @@ public class TokenController : MonoBehaviour
     public SpriteRenderer borderRenderer;
 
     [Header("Kinect Tracking")]
-    public int kinectTrackingId = -1;
+    public int kinectTrackingId = -1; // -1 = Digital. Se tiver número, é físico.
     private Vector3 _targetKinectPos;
 
     private Vector3 offset;
@@ -54,8 +54,37 @@ public class TokenController : MonoBehaviour
         }
     }
 
+    public void SetLostState(bool isLost)
+    {
+        float alpha = isLost ? 0.35f : 1f;
+
+        if (_spriteRenderer != null)
+        {
+            Color c = _spriteRenderer.color;
+            c.a = alpha;
+            _spriteRenderer.color = c;
+        }
+        if (borderRenderer != null)
+        {
+            Color c = borderRenderer.color;
+            c.a = alpha;
+            borderRenderer.color = c;
+        }
+    }
+
+    public void UpdatePositionFromKinect(Vector3 worldPos)
+    {
+        _targetKinectPos = new Vector3(worldPos.x, worldPos.y, transform.position.z);
+        transform.position = Vector3.Lerp(transform.position, _targetKinectPos, Time.deltaTime * 15f);
+
+        RevealFogIfEnabled();
+    }
+
     void OnMouseDown()
     {
+        if (kinectTrackingId != -1 && PlayerDisplaySystem.Instance != null && PlayerDisplaySystem.Instance.currentMode == VTTMode.Physical_Table)
+            return;
+
         dragStartMousePos = Input.mousePosition;
         offset = transform.position - _mainCam.ScreenToWorldPoint(Input.mousePosition);
         offset.z = 0;
@@ -64,6 +93,9 @@ public class TokenController : MonoBehaviour
     void OnMouseDrag()
     {
         if (!isPlaced) return;
+
+        if (kinectTrackingId != -1 && PlayerDisplaySystem.Instance != null && PlayerDisplaySystem.Instance.currentMode == VTTMode.Physical_Table)
+            return;
 
         Vector3 newPos = _mainCam.ScreenToWorldPoint(Input.mousePosition) + offset;
         newPos.z = transform.position.z;
@@ -83,6 +115,8 @@ public class TokenController : MonoBehaviour
     {
         if (Vector3.Distance(dragStartMousePos, Input.mousePosition) < 5f)
         {
+            // É EXATAMENTE AQUI QUE O ERRO ACONTECEU!
+            // Ele está tentando chamar a classe TokenSystem que fica logo abaixo dessa.
             TokenSystem.Instance.OpenMiniUI(this);
         }
     }
@@ -116,18 +150,28 @@ public class TokenController : MonoBehaviour
                 return false;
             }
             transform.position = new Vector3(mousePos.x, mousePos.y, -1f);
-            OnPlacedInMap();
+
+            if (PlayerDisplaySystem.Instance != null && PlayerDisplaySystem.Instance.currentMode == VTTMode.Physical_Table)
+            {
+                if (KinectManager.Instance != null)
+                {
+                    KinectManager.Instance.StartBinding(this);
+                }
+                else
+                {
+                    Debug.LogError("KinectManager não encontrado na Cena!");
+                    OnPlacedInMap();
+                }
+            }
+            else
+            {
+                OnPlacedInMap();
+            }
+
             return true;
         }
         Destroy(gameObject);
         return false;
-    }
-
-    public void UpdatePositionFromKinect(Vector3 worldPos)
-    {
-        _targetKinectPos = new Vector3(worldPos.x, worldPos.y, transform.position.z);
-        transform.position = Vector3.Lerp(transform.position, _targetKinectPos, Time.deltaTime * 15f);
-        RevealFogIfEnabled();
     }
 }
 

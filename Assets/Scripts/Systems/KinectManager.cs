@@ -4,6 +4,8 @@ using System.Runtime.InteropServices;
 
 public class KinectManager : MonoBehaviour
 {
+    public static KinectManager Instance { get; private set; }
+
     // ==========================================
     // PONTE COM O C++ (DLL IMPORT)
     // ==========================================
@@ -20,40 +22,69 @@ public class KinectManager : MonoBehaviour
     // ==========================================
     // VARIÁVEIS DA UNITY
     // ==========================================
-    [Header("Configurações Virtuais")]
-    public GameObject tokenPrefab; // Arraste um cilindro ou miniatura 3D aqui
-    public float scaleFactor = 0.05f; // Ajusta a conversão de Pixel do Kinect para Metros na Unity
+    [Header("Mapeamento do Projetor/Câmera")]
+    [Tooltip("Inverter eixo X se a câmera estiver espelhada em relação ao projetor")]
+    public bool invertX = false;
+    [Tooltip("Inverter eixo Y (O padrão é true, pois o pixel Y=0 no Kinect é no topo, e na Unity o Y cresce para cima)")]
+    public bool invertY = true;
 
-    // Dicionário que guarda as peças que estão vivas no jogo
-    private Dictionary<int, GameObject> activeTokens = new Dictionary<int, GameObject>();
+    [Header("Sistema de Recuperação")]
+    public float autoRebindDistance = 3.0f; // Distância para "adotar" um fantasma
+
+    private Dictionary<int, TokenController> boundTokens = new Dictionary<int, TokenController>();
+    private List<TokenController> orphanedTokens = new List<TokenController>();
+    private TokenController pendingBindingToken = null;
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
 
     void Start()
     {
-        // Liga o laser do Kinect ao dar Play
-        if (InitTracker())
-        {
-            Debug.Log("Kinect Conectado com Sucesso!");
-        }
-        else
-        {
-            Debug.LogError("ERRO: Kinect não encontrado ou DLL faltando.");
-        }
+        if (InitTracker()) Debug.Log("Kinect Conectado com Sucesso!");
+        else Debug.LogError("ERRO: Kinect não encontrado ou DLL faltando.");
+    }
+
+    public void StartBinding(TokenController token)
+    {
+        pendingBindingToken = token;
+        Debug.Log("VINCULAÇÃO: Coloque a miniatura física na mesa agora.");
     }
 
     void Update()
     {
-        // 1. Teclas de atalho para Calibrar e Resetar direto da Unity
-        if (Input.GetKeyDown(KeyCode.B)) StartCalibration();
-        if (Input.GetKeyDown(KeyCode.R)) ResetTracker();
+        if (Input.GetKeyDown(KeyCode.B))
+        {
+            Debug.Log("Kinect: Botão B apertado! Iniciando Calibração...");
+            StartCalibration();
+        }
+        if (Input.GetKeyDown(KeyCode.R))
+        {
+            Debug.Log("Kinect: Botão R apertado! Resetando memórias...");
+            ResetTracker();
+            boundTokens.Clear();
+            orphanedTokens.Clear();
+        }
 
-        // 2. Manda o C++ processar a imagem (O coração pulsando)
         ProcessFrame();
 
-        // 3. Lê quantas peças o C++ encontrou
         int count = GetPieceCount();
-
-        // Lista para sabermos quem sobreviveu neste frame
         HashSet<int> idsThisFrame = new HashSet<int>();
+
+        orphanedTokens.RemoveAll(t => t == null);
+
+        // --- MÁGICA ACONTECE AQUI: PEGA AS BORDAS DO MAPA ATUAL ---
+        Bounds mapBounds = new Bounds(Vector3.zero, new Vector3(24f, 14f, 0f)); // Limites padrão se não houver mapa
+        if (LayerManager.Instance != null)
+        {
+            var activeLayer = LayerManager.Instance.GetActiveLayer();
+            if (activeLayer != null && activeLayer.renderer != null)
+            {
+                mapBounds = activeLayer.renderer.bounds;
+            }
+        }
 
         for (int i = 0; i < count; i++)
         {
@@ -62,59 +93,92 @@ public class KinectManager : MonoBehaviour
 
             idsThisFrame.Add(id);
 
-            // Converte a coordenada X e Y da câmera (640x480) para o mundo 3D da Unity
-            // Centralizamos subtraindo 320 e 240. E invertemos o Y (porque na câmera o Y cresce pra baixo).
-            Vector3 worldPosition = new Vector3((x - 320) * scaleFactor, 0, -(y - 240) * scaleFactor);
+            // 1. Converte o pixel do Kinect (640x480) para uma porcentagem (0.0 a 1.0)
+            float normX = x / 640f;
+            float normY = y / 480f;
 
-            if (activeTokens.ContainsKey(id))
+            // 2. Aplica as inversões da câmera se necessário
+            if (invertX) normX = 1f - normX;
+            if (invertY) normY = 1f - normY;
+
+            // 3. Mapeia a porcentagem para os limites reais do mapa na cena da Unity
+            float worldX = Mathf.Lerp(mapBounds.min.x, mapBounds.max.x, normX);
+            float worldY = Mathf.Lerp(mapBounds.min.y, mapBounds.max.y, normY);
+
+            Vector3 worldPosition = new Vector3(worldX, worldY, 0f);
+
+            // ========================================================
+            // A PARTIR DAQUI A LÓGICA CONTINUA IGUAL...
+            // ========================================================
+            if (!boundTokens.ContainsKey(id))
             {
-                // A peça JÁ EXISTE: Vamos apenas movê-la suavemente
-                GameObject token = activeTokens[id];
-                token.transform.position = Vector3.Lerp(token.transform.position, worldPosition, Time.deltaTime * 10f);
+                TokenController bestOrphan = null;
+                float bestDist = autoRebindDistance;
 
-                // Efeito visual do "Fantasma" (3 segundos de persistência)
-                Renderer rend = token.GetComponent<Renderer>();
-                if (isLost == 1)
+                foreach (TokenController orphan in orphanedTokens)
                 {
-                    rend.material.color = new Color(1f, 1f, 0f, 0.5f); // Fica Amarelo Transparente (LOST)
+                    float dist = Vector2.Distance(new Vector2(orphan.transform.position.x, orphan.transform.position.y),
+                                                  new Vector2(worldPosition.x, worldPosition.y));
+                    if (dist < bestDist)
+                    {
+                        bestDist = dist;
+                        bestOrphan = orphan;
+                    }
                 }
-                else
+
+                if (bestOrphan != null)
                 {
-                    rend.material.color = Color.red; // Fica Vermelho normal
+                    orphanedTokens.Remove(bestOrphan);
+                    boundTokens.Add(id, bestOrphan);
+                    bestOrphan.kinectTrackingId = id;
+                    bestOrphan.SetLostState(false);
+                }
+                else if (pendingBindingToken != null)
+                {
+                    boundTokens.Add(id, pendingBindingToken);
+                    pendingBindingToken.kinectTrackingId = id;
+                    pendingBindingToken.OnPlacedInMap();
+                    pendingBindingToken = null;
                 }
             }
-            else
+
+            if (boundTokens.ContainsKey(id))
             {
-                // A peça É NOVA: Vamos spawnar um novo monstro/token na mesa!
-                GameObject newToken = Instantiate(tokenPrefab, worldPosition, Quaternion.identity);
-                newToken.name = "Token_ID_" + id;
-                newToken.GetComponent<Renderer>().material.color = Color.red;
-                activeTokens.Add(id, newToken);
-                Debug.Log("Novo Token spawnado: ID " + id);
+                TokenController token = boundTokens[id];
+                if (token != null)
+                {
+                    token.UpdatePositionFromKinect(worldPosition);
+                    token.SetLostState(isLost == 1);
+                }
             }
         }
 
-        // 4. Faxina: Se alguma peça foi apagada da memória do C++, deletamos da Unity
         List<int> idsToRemove = new List<int>();
-        foreach (int existingId in activeTokens.Keys)
+        foreach (var kvp in boundTokens)
         {
-            if (!idsThisFrame.Contains(existingId))
+            if (!idsThisFrame.Contains(kvp.Key))
             {
-                Destroy(activeTokens[existingId]); // Destrói o GameObject
-                idsToRemove.Add(existingId);
-                Debug.Log("Token removido: ID " + existingId);
+                TokenController tk = kvp.Value;
+                if (tk != null)
+                {
+                    tk.SetLostState(true);
+                    orphanedTokens.Add(tk);
+                }
+                idsToRemove.Add(kvp.Key);
             }
         }
 
-        foreach (int id in idsToRemove)
+        foreach (int id in idsToRemove) boundTokens.Remove(id);
+    }
+
+    private void OnGUI()
+    {
+        if (pendingBindingToken != null)
         {
-            activeTokens.Remove(id);
+            GUI.color = Color.yellow;
+            GUI.Label(new Rect(Screen.width / 2 - 150, 20, 300, 30), "AGUARDANDO MINIATURA FISICA NA MESA...");
         }
     }
 
-    void OnApplicationQuit()
-    {
-        // Desliga o hardware do Kinect ao fechar o jogo
-        StopTracker();
-    }
+    void OnApplicationQuit() => StopTracker();
 }
