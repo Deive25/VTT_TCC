@@ -35,6 +35,10 @@ public class KinectManager : MonoBehaviour
     private List<TokenController> orphanedTokens = new List<TokenController>();
     private TokenController pendingBindingToken = null;
 
+    // --- CONTROLE DE INICIALIZAÇÃO PREGUIÇOSA ---
+    private bool isKinectReady = false;
+    private bool initAttempted = false;
+
     private void Awake()
     {
         if (Instance == null) Instance = this;
@@ -43,8 +47,7 @@ public class KinectManager : MonoBehaviour
 
     void Start()
     {
-        if (InitTracker()) Debug.Log("Kinect Conectado com Sucesso!");
-        else Debug.LogError("ERRO: Kinect não encontrado ou DLL faltando.");
+        // Deixado vazio de propósito para a inicialização preguiçosa no Update()
     }
 
     public void StartBinding(TokenController token)
@@ -55,6 +58,32 @@ public class KinectManager : MonoBehaviour
 
     void Update()
     {
+        // 1. CHECAGEM DE MODO: Se não for mesa física, aborta o frame inteiro.
+        if (PlayerDisplaySystem.Instance != null && PlayerDisplaySystem.Instance.currentMode != VTTMode.Physical_Table)
+        {
+            return;
+        }
+
+        // 2. INICIALIZAÇÃO PREGUIÇOSA (Lazy Init): Tenta ligar o Kinect na primeira vez necessária
+        if (!isKinectReady)
+        {
+            if (!initAttempted)
+            {
+                initAttempted = true;
+                if (InitTracker())
+                {
+                    Debug.Log("[KinectManager] Kinect Conectado com Sucesso!");
+                    isKinectReady = true;
+                }
+                else
+                {
+                    Debug.LogError("[KinectManager] ERRO: Kinect não encontrado ou DLL faltando.");
+                }
+            }
+            return; // Se não inicializou com sucesso, não tenta processar o frame
+        }
+
+        // --- CONTROLES E ATUALIZAÇÕES DO KINECT ---
         if (Input.GetKeyDown(KeyCode.B))
         {
             Debug.Log("Kinect: Botão B apertado! Iniciando Calibração...");
@@ -75,7 +104,7 @@ public class KinectManager : MonoBehaviour
 
         orphanedTokens.RemoveAll(t => t == null);
 
-        // --- MÁGICA ACONTECE AQUI: PEGA AS BORDAS DO MAPA ATUAL ---
+        // --- PEGA AS BORDAS DO MAPA ATUAL ---
         Bounds mapBounds = new Bounds(Vector3.zero, new Vector3(24f, 14f, 0f)); // Limites padrão se não houver mapa
         if (LayerManager.Instance != null)
         {

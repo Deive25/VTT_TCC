@@ -76,6 +76,19 @@ public class FogOfWarController : MonoBehaviour
         pFogSR.sprite = sharedFogSprite; // Usam o mesmo ficheiro de imagem!
 
         playerFogRenderers[board] = pFogSR;
+
+        // --- CORREÇÃO DO RAIO-X: ISOLAMENTO DE CÂMERAS ---
+        // Garante que a Câmera do Mestre (Main Camera) NÃO renderize a Layer 4 (Water - Jogadores)
+        if (_cam != null)
+        {
+            _cam.cullingMask &= ~(1 << 4);
+        }
+
+        // Garante que a Câmera dos Jogadores NÃO renderize a Layer 1 (TransparentFX - Mestre)
+        if (PlayerDisplaySystem.Instance != null && PlayerDisplaySystem.Instance.playerCam != null)
+        {
+            PlayerDisplaySystem.Instance.playerCam.cullingMask &= ~(1 << 1);
+        }
     }
 
     private void Update()
@@ -94,7 +107,10 @@ public class FogOfWarController : MonoBehaviour
                 if (activeBoard.fogDirty && activeBoard.fogTex != null)
                 {
                     activeBoard.fogTex.SetPixels32(activeBoard.fogPixels);
-                    activeBoard.fogTex.Apply();
+
+                    // OTIMIZAÇÃO: Passar 'false' evita que a Unity recalcule MipMaps, reduzindo custo de CPU
+                    activeBoard.fogTex.Apply(false);
+
                     activeBoard.fogDirty = false;
                 }
             }
