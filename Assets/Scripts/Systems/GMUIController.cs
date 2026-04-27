@@ -1,8 +1,11 @@
+// ============================================================
+// GMUIController.cs
+// Integração dos controlos de Névoa Explorada. Slider de visão removido.
+// ============================================================
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using TMPro;
-using UnityEngine.InputSystem;
 
 public class GMUIController : MonoBehaviour
 {
@@ -19,6 +22,9 @@ public class GMUIController : MonoBehaviour
     private TMP_Text brushSizeText;
     private Button fogPaintBtn;
     private Button fogEraseBtn;
+
+    private Slider fogTilingSlider;
+    private Button modeToggleBtn;
 
     private RectTransform layersContainer;
     private RectTransform tokensContainer;
@@ -82,24 +88,6 @@ public class GMUIController : MonoBehaviour
     private void Update()
     {
         SyncZoom(); SyncMouseCoord(); SyncFogState();
-
-        // Código atualizado para o New Input System
-        if (Keyboard.current != null && Keyboard.current.f11Key.wasPressedThisFrame)
-        {
-            ToggleWindowMode();
-        }
-    }
-
-    public void ToggleWindowMode()
-    {
-        if (Screen.fullScreenMode == FullScreenMode.Windowed)
-        {
-            Screen.SetResolution(Display.main.systemWidth, Display.main.systemHeight, FullScreenMode.FullScreenWindow);
-        }
-        else
-        {
-            Screen.SetResolution(1280, 720, FullScreenMode.Windowed);
-        }
     }
 
     private void BuildUI()
@@ -107,7 +95,7 @@ public class GMUIController : MonoBehaviour
         Canvas cv = GetComponent<Canvas>();
         if (cv == null)
         {
-            Canvas[] allCanvas = Object.FindObjectsByType<Canvas>(FindObjectsSortMode.None);
+            Canvas[] allCanvas = FindObjectsByType<Canvas>(FindObjectsSortMode.None);
             foreach (var c in allCanvas)
             {
                 if (c.gameObject.name != "PlayerCanvas")
@@ -118,11 +106,7 @@ public class GMUIController : MonoBehaviour
             }
         }
 
-        if (cv == null)
-        {
-            Debug.LogError("[GMUIController] Canvas principal não encontrado!");
-            return;
-        }
+        if (cv == null) return;
 
         BuildRightPanel(cv.transform);
         BuildLeftPanel(cv.transform);
@@ -145,7 +129,10 @@ public class GMUIController : MonoBehaviour
         y = DrawSecHeader(p, y, "TELA DOS JOGADORES"); y = DrawPlayerScreenSection(p, y);
         y = DrawSecHeader(p, y, "CAMERA DO MESTRE"); y = DrawCameraSection(p, y);
         y = DrawSecHeader(p, y, "DADOS"); y = DrawDiceSection(p, y);
+
         y = DrawSecHeader(p, y, "NEVOA DE GUERRA"); y = DrawFogSection(p, y);
+        y = DrawSecHeader(p, y, "CUSTOMIZACAO NEVOA"); y = DrawFogSettingsSection(p, y);
+
         y = DrawSecHeader(p, y, "INFORMACOES"); y = DrawInfoSection(p, y);
 
         p.sizeDelta = new Vector2(0f, Mathf.Abs(y) + PAD);
@@ -160,14 +147,8 @@ public class GMUIController : MonoBehaviour
         y = DrawPanelHeader(p, y, "RECURSOS");
 
         y = DrawSecHeader(p, y, "GERENCIAMENTO");
-
         VTTLayout.BtnFull(p, y, BH, -PAD * 2f, "ABRIR DASHBOARD", VTTLayout.C_BTN_PRI, VTTLayout.C_BDR_ACC, VTTLayout.C_TEXT, VTTLayout.F_BTN).onClick.AddListener(() => {
-            DashboardOverlay d = FindAnyObjectByType<DashboardOverlay>(); if (d != null) d.OpenPanel();
-        });
-        y -= BH + GAP; 
-
-        VTTLayout.BtnFull(p, y, BH, -PAD * 2f, "TELA CHEIA / JANELA", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, VTTLayout.F_BTN, false).onClick.AddListener(() => {
-            ToggleWindowMode();
+            DashboardOverlay d = FindFirstObjectByType<DashboardOverlay>(); if (d != null) d.OpenPanel();
         });
         y -= BH + SGAP;
 
@@ -213,27 +194,6 @@ public class GMUIController : MonoBehaviour
         VTTLayout.BtnFull(p, y, BH, -PAD * 2f, "ABRIR JANELA FLUTUANTE", VTTLayout.C_BTN_PRI, VTTLayout.C_BDR_ACC, VTTLayout.C_TEXT, 11f).onClick.AddListener(() => {
             if (PlayerDisplaySystem.Instance != null) PlayerDisplaySystem.Instance.OpenWindow();
         });
-        y -= BH + GAP;
-
-        Button modeBtn = VTTLayout.BtnFull(p, y, BH, -PAD * 2f, "MODO ATUAL: DIGITAL", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, 10f, bold: true);
-        modeBtn.onClick.AddListener(() => {
-            if (PlayerDisplaySystem.Instance != null)
-            {
-                bool isPhysical = PlayerDisplaySystem.Instance.currentMode == VTTMode.Physical_Table;
-                PlayerDisplaySystem.Instance.currentMode = isPhysical ? VTTMode.Digital_Sync : VTTMode.Physical_Table;
-
-                bool isNowPhysical = PlayerDisplaySystem.Instance.currentMode == VTTMode.Physical_Table;
-                modeBtn.GetComponentInChildren<TMP_Text>().text = isNowPhysical ? "MODO ATUAL: MESA FÍSICA (KINECT)" : "MODO ATUAL: DIGITAL";
-                VTTLayout.SetBtnColor(modeBtn, isNowPhysical ? VTTLayout.C_BTN_ACTIVE : VTTLayout.C_BTN_SEC);
-            }
-        });
-
-        if (PlayerDisplaySystem.Instance != null)
-        {
-            bool isPhysicalInit = PlayerDisplaySystem.Instance.currentMode == VTTMode.Physical_Table;
-            modeBtn.GetComponentInChildren<TMP_Text>().text = isPhysicalInit ? "MODO ATUAL: MESA FÍSICA (KINECT)" : "MODO ATUAL: DIGITAL";
-            VTTLayout.SetBtnColor(modeBtn, isPhysicalInit ? VTTLayout.C_BTN_ACTIVE : VTTLayout.C_BTN_SEC);
-        }
         y -= BH + GAP;
 
         float hw = (W_RIGHT - PAD * 2f - GAP) * 0.5f;
@@ -449,11 +409,99 @@ public class GMUIController : MonoBehaviour
         brushSizeText.text = "20";
         VTTLayout.BtnFixed(p, PAD + smW + GAP + cntW + GAP, y, smW, bh2, "+", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, 14f).onClick.AddListener(() => { if (fogController != null) fogController.IncreaseBrush(5); RefreshBrushLabel(); });
         y -= bh2 + GAP;
-        VTTLayout.BtnFull(p, y, BH - 4f, -PAD * 2f, "LIMPAR NEVOA", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT_WARN, VTTLayout.F_BTN, bold: false).onClick.AddListener(() => { if (fogController != null) fogController.ClearAll(); });
+
+        VTTLayout.BtnFixed(p, PAD, y, hw, BH - 4f, "REVELAR TUDO", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT_WARN, VTTLayout.F_BTN, false).onClick.AddListener(() => { if (fogController != null) fogController.ClearAll(); });
+        VTTLayout.BtnFixed(p, PAD + hw + GAP, y, hw, BH - 4f, "OCULTAR TUDO", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, VTTLayout.F_BTN, false).onClick.AddListener(() => { if (fogController != null) fogController.FillAll(); });
         y -= (BH - 4f) + GAP;
+
         fogStatusText = VTTLayout.Label(p, y, 14f, VTTLayout.F_SMALL, VTTLayout.C_TEXT_DIM);
         fogStatusText.text = "Ferramenta inativa";
         return y - 14f - SGAP;
+    }
+
+    private float DrawFogSettingsSection(RectTransform p, float y)
+    {
+        VTTLayout.Label(p, y, 16f, VTTLayout.F_SMALL, VTTLayout.C_TEXT_DIM, FontStyles.Bold).text = "COR DA NÉVOA";
+
+        float currentR = fogController != null ? fogController.fogColor.r : 0.04f;
+        float currentG = fogController != null ? fogController.fogColor.g : 0.05f;
+        float currentB = fogController != null ? fogController.fogColor.b : 0.08f;
+        float currentA = fogController != null ? fogController.fogColor.a : 1.0f;
+
+        RectTransform colorPreview = VTTLayout.Box("ColorPreview", p, W_RIGHT - PAD - 30f, y + 4f, 30f, 16f, new Color(currentR, currentG, currentB, 1f));
+        VTTLayout.AccentBar(colorPreview, 1f, Color.white);
+        y -= 20f;
+
+        VTTLayout.LabelFixed(p, PAD, y, 20f, 20f, 10f, new Color(1f, 0.4f, 0.4f), FontStyles.Bold).text = "R";
+        Slider rSlider = VTTLayout.SliderFixed(p, PAD + 20f, y, W_RIGHT - PAD * 2f - 20f, 20f, 0f, 1f, currentR); y -= 24f;
+
+        VTTLayout.LabelFixed(p, PAD, y, 20f, 20f, 10f, new Color(0.4f, 1f, 0.4f), FontStyles.Bold).text = "G";
+        Slider gSlider = VTTLayout.SliderFixed(p, PAD + 20f, y, W_RIGHT - PAD * 2f - 20f, 20f, 0f, 1f, currentG); y -= 24f;
+
+        VTTLayout.LabelFixed(p, PAD, y, 20f, 20f, 10f, new Color(0.4f, 0.7f, 1f), FontStyles.Bold).text = "B";
+        Slider bSlider = VTTLayout.SliderFixed(p, PAD + 20f, y, W_RIGHT - PAD * 2f - 20f, 20f, 0f, 1f, currentB); y -= 24f;
+
+        VTTLayout.LabelFixed(p, PAD, y, 20f, 20f, 10f, Color.white, FontStyles.Bold).text = "A";
+        Slider aSlider = VTTLayout.SliderFixed(p, PAD + 20f, y, W_RIGHT - PAD * 2f - 20f, 20f, 0f, 1f, currentA); y -= 28f + GAP;
+
+        UnityEngine.Events.UnityAction updateColor = () => {
+            if (fogController != null)
+            {
+                Color newC = new Color(rSlider.value, gSlider.value, bSlider.value, aSlider.value);
+                fogController.SetColor(newC);
+                colorPreview.GetComponent<Image>().color = new Color(newC.r, newC.g, newC.b, 1f);
+            }
+        };
+
+        rSlider.onValueChanged.AddListener(v => updateColor());
+        gSlider.onValueChanged.AddListener(v => updateColor());
+        bSlider.onValueChanged.AddListener(v => updateColor());
+        aSlider.onValueChanged.AddListener(v => updateColor());
+
+        modeToggleBtn = VTTLayout.BtnFull(p, y, BH, -PAD * 2f, "MODO: COR SOLIDA", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, VTTLayout.F_BTN, true);
+        modeToggleBtn.onClick.AddListener(() => {
+            if (fogController != null)
+            {
+                var nextMode = fogController.currentFillMode == FogOfWarController.FillMode.SolidColor ?
+                               FogOfWarController.FillMode.CustomTexture : FogOfWarController.FillMode.SolidColor;
+                fogController.SetMode(nextMode);
+                modeToggleBtn.GetComponentInChildren<TMP_Text>().text = "MODO: " + (nextMode == FogOfWarController.FillMode.SolidColor ? "COR SOLIDA" : "TEXTURA");
+            }
+        });
+        y -= BH + GAP;
+
+        Button loadTexBtn = VTTLayout.BtnFull(p, y, BH, -PAD * 2f, "IMPORTAR TEXTURA (PNG/JPG)", VTTLayout.C_BTN_PRI, VTTLayout.C_BDR_ACC, VTTLayout.C_TEXT, 10f, true);
+        loadTexBtn.onClick.AddListener(() => {
+            if (MapFileLoader.Instance != null)
+            {
+                MapFileLoader.Instance.OpenFilePicker((tex) => {
+                    if (fogController != null)
+                    {
+                        fogController.LoadTexture(tex);
+                        modeToggleBtn.GetComponentInChildren<TMP_Text>().text = "MODO: TEXTURA";
+                    }
+                });
+            }
+        });
+        y -= BH + GAP;
+
+        VTTLayout.Label(p, y, 16f, VTTLayout.F_SMALL, VTTLayout.C_TEXT_DIM, FontStyles.Bold).text = "ESCALA DA TEXTURA (TILING)";
+        y -= 20f;
+        float currentTiling = fogController != null ? fogController.textureTiling : 1f;
+        fogTilingSlider = VTTLayout.MakeSlider(p, y, 28f, 0.1f, 10f, currentTiling);
+        fogTilingSlider.onValueChanged.AddListener((val) => { if (fogController != null) fogController.SetTiling(val); });
+        y -= 28f + SGAP;
+
+        VTTLayout.Label(p, y, 16f, VTTLayout.F_SMALL, VTTLayout.C_TEXT_DIM, FontStyles.Bold).text = "OPACIDADE: ÁREA EXPLORADA";
+        y -= 20f;
+        float curExp = fogController != null ? fogController.exploredOpacity : 0.65f;
+        Slider expOpacitySlider = VTTLayout.MakeSlider(p, y, 28f, 0f, 1f, curExp);
+        expOpacitySlider.onValueChanged.AddListener((val) => { if (fogController != null) fogController.SetExploredOpacity(val); });
+        y -= 28f + SGAP;
+
+        // O MEDIDOR DE RAIO DE VISÃO FOI REMOVIDO DAQUI
+
+        return y;
     }
 
     private float DrawInfoSection(RectTransform p, float y)

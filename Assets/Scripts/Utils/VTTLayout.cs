@@ -1,5 +1,6 @@
 // ============================================================
 // VTTLayout.cs
+// Biblioteca de UI via Código com Suporte a SliderFixed adicionado.
 // ============================================================
 using UnityEngine;
 using UnityEngine.UI;
@@ -141,11 +142,7 @@ public static class VTTLayout
 
         TMP_Text textComp = textGO.AddComponent<TextMeshProUGUI>();
         textComp.fontSize = fontSize; textComp.color = textColor; textComp.fontStyle = style;
-
-        // --- CORREÇÃO AQUI (Removido enableWordWrapping obsoleto) ---
-        textComp.alignment = TextAlignmentOptions.MidlineLeft;
-        textComp.textWrappingMode = TextWrappingModes.NoWrap;
-        textComp.extraPadding = true;
+        textComp.alignment = TextAlignmentOptions.MidlineLeft; textComp.enableWordWrapping = false; textComp.extraPadding = true;
 
         input.textViewport = vpRT; input.textComponent = textComp; input.text = defaultText;
         input.customCaretColor = true; input.caretColor = textColor; input.caretWidth = 2; input.caretBlinkRate = 0.85f;
@@ -166,10 +163,7 @@ public static class VTTLayout
         TMP_InputField input = InputFieldFixed(parent, x, y, w, h, fontSize, textColor, style, defaultText);
         input.lineType = TMP_InputField.LineType.MultiLineNewline;
         input.textComponent.alignment = TextAlignmentOptions.TopLeft;
-
-        // --- CORREÇÃO AQUI (Removido enableWordWrapping obsoleto) ---
-        input.textComponent.textWrappingMode = TextWrappingModes.Normal;
-
+        input.textComponent.enableWordWrapping = true;
         return input;
     }
 
@@ -222,27 +216,77 @@ public static class VTTLayout
         RectTransform wrt = wrap.AddComponent<RectTransform>();
         wrt.anchorMin = new Vector2(0f, 1f); wrt.anchorMax = new Vector2(1f, 1f); wrt.pivot = new Vector2(0.5f, 1f); wrt.anchoredPosition = new Vector2(0f, y); wrt.sizeDelta = new Vector2(-PAD * 2f, height);
         Deco(wrap, C_BDR_DEFAULT);
+
         GameObject go = New("Slider", wrap.transform);
         RectTransform rt = go.AddComponent<RectTransform>();
         rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.pivot = new Vector2(0.5f, 0.5f); rt.anchoredPosition = Vector2.zero; rt.sizeDelta = new Vector2(-2f, -2f);
         Deco(go, C_CONTENT_BG);
+
         Slider s = go.AddComponent<Slider>(); s.minValue = min; s.maxValue = max; s.value = val; s.direction = Slider.Direction.LeftToRight;
+
         GameObject t = New("Track", go.transform);
         RectTransform trt = t.AddComponent<RectTransform>();
         trt.anchorMin = new Vector2(0f, 0.30f); trt.anchorMax = new Vector2(1f, 0.70f); trt.sizeDelta = Vector2.zero; Deco(t, RGB(0.07f, 0.08f, 0.11f));
+
         GameObject fa = New("FillArea", go.transform);
         RectTransform faRT = fa.AddComponent<RectTransform>();
         faRT.anchorMin = new Vector2(0f, 0.30f); faRT.anchorMax = new Vector2(1f, 0.70f); faRT.sizeDelta = new Vector2(-10f, 0f); faRT.anchoredPosition = new Vector2(5f, 0f); faRT.pivot = new Vector2(0.5f, 0.5f);
+
         GameObject fill = New("Fill", fa.transform);
         RectTransform fillRT = fill.AddComponent<RectTransform>();
         fillRT.anchorMin = Vector2.zero; fillRT.anchorMax = new Vector2(0f, 1f); fillRT.sizeDelta = Vector2.zero; fillRT.pivot = new Vector2(0f, 0.5f); fillRT.anchoredPosition = Vector2.zero; Deco(fill, C_ACCENT);
+
         GameObject ha = New("HandleArea", go.transform);
         RectTransform haRT = ha.AddComponent<RectTransform>();
         haRT.anchorMin = Vector2.zero; haRT.anchorMax = Vector2.one; haRT.sizeDelta = new Vector2(-10f, 0f); haRT.anchoredPosition = Vector2.zero; haRT.pivot = new Vector2(0.5f, 0.5f);
+
         GameObject handle = New("Handle", ha.transform);
         RectTransform handleRT = handle.AddComponent<RectTransform>();
         handleRT.sizeDelta = new Vector2(14f, 14f); handleRT.pivot = new Vector2(0.5f, 0.5f);
         Image hImg = handle.AddComponent<Image>(); hImg.color = RGB(0.74f, 0.82f, 0.93f); hImg.raycastTarget = true;
+
+        s.fillRect = fillRT; s.handleRect = handleRT; s.targetGraphic = hImg;
+        return s;
+    }
+
+    // --- NOVO MÉTODO PARA RESOLVER O ERRO ---
+    public static Slider SliderFixed(RectTransform parent, float x, float y, float width, float height, float min, float max, float val)
+    {
+        GameObject wrap = New("SliderWrap", parent);
+        RectTransform wrt = wrap.AddComponent<RectTransform>();
+        // Ancora Fixa no topo esquerdo
+        wrt.anchorMin = new Vector2(0f, 1f); wrt.anchorMax = new Vector2(0f, 1f); wrt.pivot = new Vector2(0f, 1f);
+        wrt.anchoredPosition = new Vector2(x, y); wrt.sizeDelta = new Vector2(width, height);
+        Deco(wrap, C_BDR_DEFAULT);
+
+        GameObject go = New("Slider", wrap.transform);
+        RectTransform rt = go.AddComponent<RectTransform>();
+        rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.pivot = new Vector2(0.5f, 0.5f); rt.anchoredPosition = Vector2.zero; rt.sizeDelta = new Vector2(-2f, -2f);
+        Deco(go, C_CONTENT_BG);
+
+        Slider s = go.AddComponent<Slider>(); s.minValue = min; s.maxValue = max; s.value = val; s.direction = Slider.Direction.LeftToRight;
+
+        GameObject t = New("Track", go.transform);
+        RectTransform trt = t.AddComponent<RectTransform>();
+        trt.anchorMin = new Vector2(0f, 0.30f); trt.anchorMax = new Vector2(1f, 0.70f); trt.sizeDelta = Vector2.zero; Deco(t, RGB(0.07f, 0.08f, 0.11f));
+
+        GameObject fa = New("FillArea", go.transform);
+        RectTransform faRT = fa.AddComponent<RectTransform>();
+        faRT.anchorMin = new Vector2(0f, 0.30f); faRT.anchorMax = new Vector2(1f, 0.70f); faRT.sizeDelta = new Vector2(-10f, 0f); faRT.anchoredPosition = new Vector2(5f, 0f); faRT.pivot = new Vector2(0.5f, 0.5f);
+
+        GameObject fill = New("Fill", fa.transform);
+        RectTransform fillRT = fill.AddComponent<RectTransform>();
+        fillRT.anchorMin = Vector2.zero; fillRT.anchorMax = new Vector2(0f, 1f); fillRT.sizeDelta = Vector2.zero; fillRT.pivot = new Vector2(0f, 0.5f); fillRT.anchoredPosition = Vector2.zero; Deco(fill, C_ACCENT);
+
+        GameObject ha = New("HandleArea", go.transform);
+        RectTransform haRT = ha.AddComponent<RectTransform>();
+        haRT.anchorMin = Vector2.zero; haRT.anchorMax = Vector2.one; haRT.sizeDelta = new Vector2(-10f, 0f); haRT.anchoredPosition = Vector2.zero; haRT.pivot = new Vector2(0.5f, 0.5f);
+
+        GameObject handle = New("Handle", ha.transform);
+        RectTransform handleRT = handle.AddComponent<RectTransform>();
+        handleRT.sizeDelta = new Vector2(14f, 14f); handleRT.pivot = new Vector2(0.5f, 0.5f);
+        Image hImg = handle.AddComponent<Image>(); hImg.color = RGB(0.74f, 0.82f, 0.93f); hImg.raycastTarget = true;
+
         s.fillRect = fillRT; s.handleRect = handleRT; s.targetGraphic = hImg;
         return s;
     }

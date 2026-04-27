@@ -1,29 +1,38 @@
+// ============================================================
+// TokenSystem.cs
+// Integração completa da Visão Individual por Token (Formato e Raio).
+// Controles de visão adicionados à Mini UI do Token e atalhos de rato.
+// ============================================================
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
+
+// Enumeração para os formatos de visão
+public enum VisionShape { Circle = 0, Square = 1, Cone = 2 }
 
 public class TokenController : MonoBehaviour
 {
     public string charId;
     public bool isPlaced = false;
-    public bool revealsFog = true;
     public SpriteRenderer borderRenderer;
 
-    [Header("Kinect Tracking")]
-    public int kinectTrackingId = -1; // -1 = Digital. Se tiver número, é físico.
-    private Vector3 _targetKinectPos;
+    [Header("Sistema de Visão")]
+    public bool revealsFog = true;
+    public VisionShape visionShape = VisionShape.Circle;
+    public float visionRadius = 3f;
 
     private Vector3 offset;
     private Vector3 dragStartMousePos;
     private int colorIdx = 0;
     private Color[] palette = { Color.white, new Color(0.85f, 0.2f, 0.2f), new Color(0.2f, 0.5f, 0.9f), new Color(0.2f, 0.8f, 0.3f), new Color(0.92f, 0.78f, 0.28f), Color.black };
 
+    // --- OTIMIZAÇÃO: Cache de Referências ---
     private MapController _mapController;
     private FogOfWarController _fogController;
     private Camera _mainCam;
     private SpriteRenderer _spriteRenderer;
 
-    private void Awake()
+    private void Start()
     {
         _mapController = FindAnyObjectByType<MapController>();
         _fogController = FindAnyObjectByType<FogOfWarController>();
@@ -40,6 +49,7 @@ public class TokenController : MonoBehaviour
         CircleCollider2D col = GetComponent<CircleCollider2D>();
         if (col != null) col.enabled = true;
 
+        // Ao soltar no mapa, volta para a camada abaixo da névoa
         if (_spriteRenderer != null) _spriteRenderer.sortingOrder = 41;
         if (borderRenderer != null) borderRenderer.sortingOrder = 40;
 
@@ -48,43 +58,37 @@ public class TokenController : MonoBehaviour
 
     public void RevealFogIfEnabled()
     {
+        // Garante que só limpa a névoa se já estiver fixado no tabuleiro
         if (isPlaced && revealsFog && _fogController != null)
         {
-            _fogController.RevealByToken(transform.position, transform.localScale.x * 2.5f);
+            // Agora envia o raio individual e o formato de visão para a GPU/Textura
+            _fogController.RevealByToken(transform.position, visionRadius, visionShape);
         }
     }
 
-    public void SetLostState(bool isLost)
+    private void OnMouseOver()
     {
-        float alpha = isLost ? 0.35f : 1f;
+        // Se ainda não estiver fixado, os controlos são geridos pelo FollowMouse
+        if (!isPlaced) return;
 
-        if (_spriteRenderer != null)
+        // Botão Direito: Troca entre Círculo e Quadrado rapidamente
+        if (Input.GetMouseButtonDown(1))
         {
-            Color c = _spriteRenderer.color;
-            c.a = alpha;
-            _spriteRenderer.color = c;
+            visionShape = visionShape == VisionShape.Circle ? VisionShape.Square : VisionShape.Circle;
+            RevealFogIfEnabled(); // Atualiza na hora
         }
-        if (borderRenderer != null)
+
+        // Scroll do Rato: Aumenta ou diminui o raio de visão rapidamente
+        float scroll = Input.mouseScrollDelta.y;
+        if (scroll != 0)
         {
-            Color c = borderRenderer.color;
-            c.a = alpha;
-            borderRenderer.color = c;
+            visionRadius = Mathf.Clamp(visionRadius + Mathf.Sign(scroll) * 0.5f, 1f, 20f);
+            RevealFogIfEnabled(); // Atualiza na hora
         }
-    }
-
-    public void UpdatePositionFromKinect(Vector3 worldPos)
-    {
-        _targetKinectPos = new Vector3(worldPos.x, worldPos.y, transform.position.z);
-        transform.position = Vector3.Lerp(transform.position, _targetKinectPos, Time.deltaTime * 15f);
-
-        RevealFogIfEnabled();
     }
 
     void OnMouseDown()
     {
-        if (kinectTrackingId != -1 && PlayerDisplaySystem.Instance != null && PlayerDisplaySystem.Instance.currentMode == VTTMode.Physical_Table)
-            return;
-
         dragStartMousePos = Input.mousePosition;
         offset = transform.position - _mainCam.ScreenToWorldPoint(Input.mousePosition);
         offset.z = 0;
@@ -92,10 +96,7 @@ public class TokenController : MonoBehaviour
 
     void OnMouseDrag()
     {
-        if (!isPlaced) return;
-
-        if (kinectTrackingId != -1 && PlayerDisplaySystem.Instance != null && PlayerDisplaySystem.Instance.currentMode == VTTMode.Physical_Table)
-            return;
+        if (!isPlaced) return; // Evita arrasto anômalo antes de fixar
 
         Vector3 newPos = _mainCam.ScreenToWorldPoint(Input.mousePosition) + offset;
         newPos.z = transform.position.z;
@@ -108,6 +109,7 @@ public class TokenController : MonoBehaviour
         }
         transform.position = newPos;
 
+        // Limpa a névoa ativamente em tempo real enquanto o token passa por cima
         RevealFogIfEnabled();
     }
 
@@ -115,8 +117,6 @@ public class TokenController : MonoBehaviour
     {
         if (Vector3.Distance(dragStartMousePos, Input.mousePosition) < 5f)
         {
-            // É EXATAMENTE AQUI QUE O ERRO ACONTECEU!
-            // Ele está tentando chamar a classe TokenSystem que fica logo abaixo dessa.
             TokenSystem.Instance.OpenMiniUI(this);
         }
     }
@@ -127,14 +127,16 @@ public class TokenController : MonoBehaviour
         newPos.z = -5f;
         transform.position = newPos;
 
+        // Controle orgânico de escala via Scroll ANTES de fixar
         if (Input.mouseScrollDelta.y != 0)
         {
             float multiplier = Input.mouseScrollDelta.y > 0 ? 1.15f : 0.85f;
             float s = transform.localScale.x * multiplier;
-            s = Mathf.Clamp(s, 0.01f, 20.0f);
+            s = Mathf.Clamp(s, 0.01f, 20.0f); // Limites expandidos
             transform.localScale = new Vector3(s, s, 1f);
         }
 
+        // Ajuste de borda antes de colocar no mapa
         if (Input.GetMouseButtonDown(1)) CycleBorderColor();
     }
 
@@ -150,24 +152,7 @@ public class TokenController : MonoBehaviour
                 return false;
             }
             transform.position = new Vector3(mousePos.x, mousePos.y, -1f);
-
-            if (PlayerDisplaySystem.Instance != null && PlayerDisplaySystem.Instance.currentMode == VTTMode.Physical_Table)
-            {
-                if (KinectManager.Instance != null)
-                {
-                    KinectManager.Instance.StartBinding(this);
-                }
-                else
-                {
-                    Debug.LogError("KinectManager não encontrado na Cena!");
-                    OnPlacedInMap();
-                }
-            }
-            else
-            {
-                OnPlacedInMap();
-            }
-
+            OnPlacedInMap();
             return true;
         }
         Destroy(gameObject);
@@ -210,6 +195,7 @@ public class TokenSystem : MonoBehaviour
         Texture2D tex = CharacterManager.Instance.LoadAvatar(record.avatarFileName);
         avatarSR.sprite = VTTLayout.CreateCircularWorldSprite(tex);
 
+        // --- CORREÇÃO: Passa por cima da névoa na primeira arrastada ---
         avatarSR.sortingOrder = 501;
 
         GameObject borderGO = new GameObject("Border");
@@ -316,6 +302,38 @@ public class TokenSystem : MonoBehaviour
         }
         y -= 45f;
 
+        y -= 5f;
+        VTTLayout.Box("Div2", contentRT, 0, y, 250f, 1f, VTTLayout.C_BDR_DEFAULT);
+        y -= 15f;
+
+        // --- NOVOS CONTROLOS DE VISÃO NA MINI UI ---
+        VTTLayout.LabelFixed(contentRT, 0, y, 150f, 20f, 11f, VTTLayout.C_TEXT_DIM, FontStyles.Bold, TextAlignmentOptions.MidlineLeft).text = "RAIO DE VISÃO";
+        TMP_Text radTxt = VTTLayout.LabelFixed(contentRT, 150f, y, 100f, 20f, 11f, VTTLayout.C_ACCENT, FontStyles.Bold, TextAlignmentOptions.MidlineRight);
+        radTxt.text = activeToken.visionRadius.ToString("F1");
+        y -= 25f;
+
+        Slider radSlider = VTTLayout.MakeSlider(contentRT, y, 24f, 1f, 20f, activeToken.visionRadius);
+        radSlider.onValueChanged.AddListener((val) => {
+            if (activeToken != null)
+            {
+                activeToken.visionRadius = val;
+                radTxt.text = val.ToString("F1");
+                activeToken.RevealFogIfEnabled();
+            }
+        });
+        y -= 35f;
+
+        Button btnShape = VTTLayout.BtnFull(contentRT, y, 30f, 0f, "FORMATO: " + (activeToken.visionShape == VisionShape.Circle ? "CÍRCULO" : "QUADRADO"), VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, Color.white, 11f);
+        btnShape.onClick.AddListener(() => {
+            if (activeToken != null)
+            {
+                activeToken.visionShape = activeToken.visionShape == VisionShape.Circle ? VisionShape.Square : VisionShape.Circle;
+                btnShape.GetComponentInChildren<TMP_Text>().text = "FORMATO: " + (activeToken.visionShape == VisionShape.Circle ? "CÍRCULO" : "QUADRADO");
+                activeToken.RevealFogIfEnabled();
+            }
+        });
+        y -= 40f;
+
         Color fogColor = activeToken.revealsFog ? VTTLayout.C_BTN_ACTIVE : VTTLayout.C_BTN_SEC;
         string fogText = activeToken.revealsFog ? "EMITE VISÃO: LIGADO" : "FANTASMA (ESCONDIDO)";
         Button btnFog = VTTLayout.BtnFull(contentRT, y, 30f, 0f, fogText, fogColor, VTTLayout.C_BDR_DEFAULT, Color.white, 11f);
@@ -323,7 +341,7 @@ public class TokenSystem : MonoBehaviour
             if (activeToken != null)
             {
                 activeToken.revealsFog = !activeToken.revealsFog;
-                OpenMiniUI(activeToken);
+                OpenMiniUI(activeToken); // Atualiza a cor e o texto do botão instantaneamente
                 activeToken.RevealFogIfEnabled();
             }
         });
