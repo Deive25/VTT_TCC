@@ -47,6 +47,7 @@ public class FogOfWarController : MonoBehaviour
 
     private Dictionary<TokenController, Vector3> lastRevealedPos = new Dictionary<TokenController, Vector3>();
     private Vector4[] tokenVisionArray = new Vector4[64];
+    private Vector4[] tokenDirArray = new Vector4[64];
     private Dictionary<LayerData, SpriteRenderer> playerFogRenderers = new Dictionary<LayerData, SpriteRenderer>();
 
     private void Awake()
@@ -163,10 +164,17 @@ public class FogOfWarController : MonoBehaviour
             // O TOKEN AGORA CONTROLA A SUA PRÓPRIA VISÃO
             if (t != null && t.gameObject.activeInHierarchy && t.revealsFog && t.isPlaced)
             {
+
+                // Substitua o bloco de código dentro do "if (count < 64)" no UpdateTokenVision por:
                 if (count < 64)
                 {
-                    // W passa a conter o tipo de formato de visão (0=Circle, 1=Square)
                     tokenVisionArray[count] = new Vector4(t.transform.position.x, t.transform.position.y, t.visionRadius, (float)t.visionShape);
+
+                    // Lógica do Cone: Pega a direção (Frente do sprite) e o cosseno da metade do ângulo
+                    Vector2 dir = t.transform.up; // Se o seu token "olha" para a direita, use t.transform.right
+                    float cosAngle = Mathf.Cos(t.visionAngle * 0.5f * Mathf.Deg2Rad);
+                    tokenDirArray[count] = new Vector4(dir.x, dir.y, cosAngle, 0f);
+
                     count++;
                 }
 
@@ -176,8 +184,7 @@ public class FogOfWarController : MonoBehaviour
 
                 if (needsReveal)
                 {
-                    // Enviamos o formato específico para gravar o rastro correto
-                    RevealByToken(t.transform.position, t.visionRadius, t.visionShape);
+                    RevealByToken(t.transform.position, t.visionRadius, t.visionShape, t.transform.up, t.visionAngle);
                     lastRevealedPos[t] = t.transform.position;
                 }
             }
@@ -186,7 +193,11 @@ public class FogOfWarController : MonoBehaviour
         if (fogMaterial != null)
         {
             fogMaterial.SetInt("_TokenCount", count);
-            if (count > 0) fogMaterial.SetVectorArray("_TokenPositions", tokenVisionArray);
+            if (count > 0)
+            {
+                fogMaterial.SetVectorArray("_TokenPositions", tokenVisionArray);
+                fogMaterial.SetVectorArray("_TokenDirections", tokenDirArray); // NOVO
+            }
         }
     }
 
@@ -279,7 +290,7 @@ public class FogOfWarController : MonoBehaviour
     }
 
     // --- AGORA RECEBE O FORMATO DA VISÃO DO TOKEN ---
-    public void RevealByToken(Vector3 worldPos, float radiusInWorldUnits, VisionShape shape)
+    public void RevealByToken(Vector3 worldPos, float radiusInWorldUnits, VisionShape shape, Vector2 direction, float visionAngle)
     {
         if (LayerManager.Instance == null) return;
         LayerData board = LayerManager.Instance.GetActiveLayer();
@@ -298,26 +309,34 @@ public class FogOfWarController : MonoBehaviour
         int r = Mathf.RoundToInt(radiusInWorldUnits * pixelsPerUnit);
         int r2 = r * r;
 
+        float cosAngleThreshold = Mathf.Cos(visionAngle * 0.5f * Mathf.Deg2Rad);
+
         for (int py = Mathf.Max(0, cy - r); py <= Mathf.Min(board.fogTex.height - 1, cy + r); py++)
         {
             for (int px = Mathf.Max(0, cx - r); px <= Mathf.Min(board.fogTex.width - 1, cx + r); px++)
             {
-
                 bool inVision = false;
-                // Círculo
+                float dx = px - cx;
+                float dy = py - cy;
+                float sqrDist = dx * dx + dy * dy;
+
                 if (shape == VisionShape.Circle)
                 {
-                    if ((px - cx) * (px - cx) + (py - cy) * (py - cy) <= r2) inVision = true;
+                    if (sqrDist <= r2) inVision = true;
                 }
-                // Quadrado
                 else if (shape == VisionShape.Square)
                 {
-                    if (Mathf.Abs(px - cx) <= r && Mathf.Abs(py - cy) <= r) inVision = true;
+                    if (Mathf.Abs(dx) <= r && Mathf.Abs(dy) <= r) inVision = true;
                 }
-                // Fallback para Círculo por enquanto se for Cone
-                else
+                else if (shape == VisionShape.Cone) 
                 {
-                    if ((px - cx) * (px - cx) + (py - cy) * (py - cy) <= r2) inVision = true;
+                    if (sqrDist <= r2 && sqrDist > 0)
+                    {
+                        Vector2 pixelDir = new Vector2(dx, dy).normalized;
+                        if (Vector2.Dot(pixelDir, direction) >= cosAngleThreshold)
+                            inVision = true;
+                    }
+                    else if (sqrDist == 0) inVision = true; // O centro da visão sempre é visível
                 }
 
                 if (inVision)
@@ -325,7 +344,7 @@ public class FogOfWarController : MonoBehaviour
                     int idx = py * board.fogTex.width + px;
                     if (board.fogPixels[idx].a > 200)
                     {
-                        board.fogPixels[idx] = exploredColor;
+                        board.fogPixels[idx] = new Color32(255, 255, 255, 128); // exploredColor
                         board.fogDirty = true;
                     }
                 }

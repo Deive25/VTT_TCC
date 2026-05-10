@@ -45,6 +45,7 @@ Shader "VTT/FogOfWar"
 
             // Arrays: xyz = Pos X, Pos Y, Raio | w = Formato (0=Círculo, 1=Quadrado)
             uniform float4 _TokenPositions[64];
+            uniform float4 _TokenDirections[64];
             uniform int _TokenCount;
 
             v2f vert (appdata v) {
@@ -65,20 +66,25 @@ Shader "VTT/FogOfWar"
                     float shape = _TokenPositions[j].w;
                     float dist = 0;
 
-                    // 0.0 = Círculo (Distância Euclidiana)
                     if (shape < 0.5) {
                         dist = distance(i.worldPos.xy, _TokenPositions[j].xy);
                     } 
-                    // 1.0 = Quadrado (Distância de Chebyshev)
                     else if (shape < 1.5) {
                         dist = max(abs(i.worldPos.x - _TokenPositions[j].x), abs(i.worldPos.y - _TokenPositions[j].y));
                     }
-                    // Futuro 2.0 = Cone (Fallback para Círculo por enquanto)
-                    else {
+                    else { 
+                        float2 dirToPixel = normalize(i.worldPos.xy - _TokenPositions[j].xy);
+                        float2 tokenDir = _TokenDirections[j].xy;
+                        float cosAngleThreshold = _TokenDirections[j].z;
+        
+                        float cosAngle = dot(dirToPixel, tokenDir);
                         dist = distance(i.worldPos.xy, _TokenPositions[j].xy);
+        
+                        if (cosAngle < cosAngleThreshold && dist > 0.01) {
+                            dist = 9999.0;
+                        }
                     }
-                    
-                    // Bordas esmaecidas (Suavidade)
+    
                     float vision = smoothstep(radius, radius * 0.5, dist);
                     inLoS = max(inLoS, vision);
                 }

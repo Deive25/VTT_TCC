@@ -411,7 +411,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e27491b1e76f79041b38377ff372bb7e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerDisplaySystem
-  currentMode: 1
+  currentMode: 0
   playerCam: {fileID: 0}
   isLinkedToGM: 0
   showDiceRolls: 0
@@ -595,10 +595,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2cd583b9382371841bb7e7fa3aa090a4, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FogOfWarController
-  brushRadius: 20
-  minBrushRadius: 3
-  maxBrushRadius: 80
   fogColor: {r: 0.04, g: 0.05, b: 0.08, a: 1}
+  currentFillMode: 0
+  customFogTexture: {fileID: 0}
+  textureTiling: 1
+  exploredOpacity: 0.65
+  brushRadius: 20
   maxTexResolution: 512
   isXRayActive: 0
 --- !u!114 &1766376545

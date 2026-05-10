@@ -10,6 +10,8 @@ using TMPro;
 // Enumeração para os formatos de visão
 public enum VisionShape { Circle = 0, Square = 1, Cone = 2 }
 
+
+
 public class TokenController : MonoBehaviour
 {
     public string charId;
@@ -24,6 +26,7 @@ public class TokenController : MonoBehaviour
     public bool revealsFog = true;
     public VisionShape visionShape = VisionShape.Circle;
     public float visionRadius = 3f;
+    public float visionAngle = 90f; // Ângulo do c
 
     private Vector3 offset;
     private Vector3 dragStartMousePos;
@@ -66,7 +69,7 @@ public class TokenController : MonoBehaviour
         if (isPlaced && revealsFog && _fogController != null)
         {
             // Agora envia o raio individual e o formato de visão para a GPU/Textura
-            _fogController.RevealByToken(transform.position, visionRadius, visionShape);
+            _fogController.RevealByToken(transform.position, visionRadius, visionShape, transform.up, visionAngle);
         }
     }
 
@@ -101,16 +104,24 @@ public class TokenController : MonoBehaviour
         // Botão Direito: Troca entre Círculo e Quadrado rapidamente
         if (Input.GetMouseButtonDown(1))
         {
-            visionShape = visionShape == VisionShape.Circle ? VisionShape.Square : VisionShape.Circle;
+            if (visionShape == VisionShape.Circle)
+                visionShape = VisionShape.Square;
+            else if (visionShape == VisionShape.Square)
+                visionShape = VisionShape.Cone;
+            else
+                visionShape = VisionShape.Circle;
             RevealFogIfEnabled(); // Atualiza na hora
         }
 
         // Scroll do Rato: Aumenta ou diminui o raio de visão rapidamente
-        float scroll = Input.mouseScrollDelta.y;
-        if (scroll != 0)
+        float scroll = Input.GetAxis("Mouse ScrollWheel");
+        if (Mathf.Abs(scroll) > 0f)
         {
-            visionRadius = Mathf.Clamp(visionRadius + Mathf.Sign(scroll) * 0.5f, 1f, 20f);
-            RevealFogIfEnabled(); // Atualiza na hora
+            // Se rolou para frente, gira 45 graus pra esquerda. Se rolou para trás, gira 45 pra direita.
+            float angleToRotate = scroll > 0 ? 45f : -45f;
+            transform.Rotate(0, 0, angleToRotate);
+
+            RevealFogIfEnabled(); // Atualiza a névoa na nova direção
         }
     }
 
@@ -154,23 +165,27 @@ public class TokenController : MonoBehaviour
         }
     }
 
+    // Modifique no arquivo TokenController ou TokenSystem
     public void FollowMouse()
     {
-        Vector3 newPos = _mainCam.ScreenToWorldPoint(Input.mousePosition);
-        newPos.z = -5f;
-        transform.position = newPos;
+        Camera mainCam = Camera.main;
 
-        // Controle orgânico de escala via Scroll ANTES de fixar
-        if (Input.mouseScrollDelta.y != 0)
+        // 1. Verificação de segurança (Impede o NullReferenceException)
+        if (mainCam == null)
         {
-            float multiplier = Input.mouseScrollDelta.y > 0 ? 1.15f : 0.85f;
-            float s = transform.localScale.x * multiplier;
-            s = Mathf.Clamp(s, 0.01f, 20.0f); // Limites expandidos
-            transform.localScale = new Vector3(s, s, 1f);
+            Debug.LogWarning("[TokenSystem] Câmera Principal não encontrada! Verifique se sua câmera tem a tag 'MainCamera'.");
+            return;
         }
 
-        // Ajuste de borda antes de colocar no mapa
-        if (Input.GetMouseButtonDown(1)) CycleBorderColor();
+        Vector3 mousePos = Input.mousePosition;
+
+        // 2. Definimos o Z com base na posição da câmera para o cálculo do ScreenToWorldPoint funcionar corretamente
+        mousePos.z = -mainCam.transform.position.z;
+
+        Vector3 worldPos = mainCam.ScreenToWorldPoint(mousePos);
+
+        // 3. Travamos o Z em 0f para o ambiente de tabuleiro 2D
+        transform.position = new Vector3(worldPos.x, worldPos.y, 0f);
     }
 
     public bool TryPlaceInMap()
@@ -373,12 +388,26 @@ public class TokenSystem : MonoBehaviour
         });
         y -= 35f;
 
-        Button btnShape = VTTLayout.BtnFull(contentRT, y, 30f, 0f, "FORMATO: " + (activeToken.visionShape == VisionShape.Circle ? "CÍRCULO" : "QUADRADO"), VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, Color.white, 11f);
+        string initialShapeName = activeToken.visionShape == VisionShape.Circle ? "CÍRCULO" : (activeToken.visionShape == VisionShape.Square ? "QUADRADO" : "CONE");
+
+        Button btnShape = VTTLayout.BtnFull(contentRT, y, 30f, 0f, "FORMATO: " + initialShapeName, VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, Color.white, 11f);
+
         btnShape.onClick.AddListener(() => {
             if (activeToken != null)
             {
-                activeToken.visionShape = activeToken.visionShape == VisionShape.Circle ? VisionShape.Square : VisionShape.Circle;
-                btnShape.GetComponentInChildren<TMP_Text>().text = "FORMATO: " + (activeToken.visionShape == VisionShape.Circle ? "CÍRCULO" : "QUADRADO");
+                // 1. Alterna o formato: Círculo -> Quadrado -> Cone -> Círculo
+                if (activeToken.visionShape == VisionShape.Circle)
+                    activeToken.visionShape = VisionShape.Square;
+                else if (activeToken.visionShape == VisionShape.Square)
+                    activeToken.visionShape = VisionShape.Cone;
+                else
+                    activeToken.visionShape = VisionShape.Circle;
+
+                // 2. Define o novo texto baseado na escolha atual
+                string newShapeName = activeToken.visionShape == VisionShape.Circle ? "CÍRCULO" : (activeToken.visionShape == VisionShape.Square ? "QUADRADO" : "CONE");
+
+                // 3. Atualiza o botão e a névoa
+                btnShape.GetComponentInChildren<TMP_Text>().text = "FORMATO: " + newShapeName;
                 activeToken.RevealFogIfEnabled();
             }
         });
