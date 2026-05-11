@@ -115,9 +115,10 @@ public class TokenController : MonoBehaviour
 
         // Scroll do Rato: Aumenta ou diminui o raio de visão rapidamente
         float scroll = Input.GetAxis("Mouse ScrollWheel");
-        if (Mathf.Abs(scroll) > 0f)
+
+        // NOVO: Só gira a peça se o botão Shift (esquerdo ou direito) estiver pressionado
+        if (Mathf.Abs(scroll) > 0f && (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)))
         {
-            // Se rolou para frente, gira 45 graus pra esquerda. Se rolou para trás, gira 45 pra direita.
             float angleToRotate = scroll > 0 ? 45f : -45f;
             transform.Rotate(0, 0, angleToRotate);
 

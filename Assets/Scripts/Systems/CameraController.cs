@@ -127,6 +127,9 @@ public class CameraController : MonoBehaviour
         // Ignora scroll quando o cursor está sobre a UI (painel do GM).
         if (IsPointerOverUI()) return;
 
+        // NOVO: Ignora o zoom se o Shift estiver pressionado (pois está sendo usado para girar o token)
+        if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) return;
+
         if (debugMode)
             Debug.Log($"[Camera] Zoom scroll={scroll:F4}  orthoSize={_cam.orthographicSize:F3}");
 
