@@ -411,7 +411,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e27491b1e76f79041b38377ff372bb7e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerDisplaySystem
-  currentMode: 0
+  currentMode: 1
   playerCam: {fileID: 0}
   isLinkedToGM: 0
   showDiceRolls: 0

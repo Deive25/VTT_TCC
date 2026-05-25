@@ -23,6 +23,10 @@ public class PlayerDisplaySystem : MonoBehaviour
     private RectTransform windowRT;
     private GameObject viewCont;
 
+    // --- NOVA JANELA DE OPÇÕES ---
+    private GameObject optionsWindow;
+    private bool isFullscreenPref = false; // Guarda a preferência do Mestre
+
     private TMP_Text diceText;
     private Coroutine diceRoutine;
 
@@ -41,11 +45,27 @@ public class PlayerDisplaySystem : MonoBehaviour
     {
         if (Instance == null) Instance = this;
         else { Destroy(gameObject); return; }
+
+        // Inicia forçando o Modo Janela
+        SetFullscreenMode(false);
     }
 
     private void Start()
     {
         StartCoroutine(DelayedSetup());
+    }
+
+    private void Update()
+    {
+        // Abre o Menu de Opções apertando ESC
+        if (Input.GetKeyDown(KeyCode.Escape))
+        {
+            if (optionsWindow != null)
+            {
+                optionsWindow.SetActive(!optionsWindow.activeSelf);
+                if (optionsWindow.activeSelf) optionsWindow.transform.SetAsLastSibling();
+            }
+        }
     }
 
     private IEnumerator DelayedSetup()
@@ -100,8 +120,115 @@ public class PlayerDisplaySystem : MonoBehaviour
         diceText.text = "";
 
         BuildFloatingWindow();
+        BuildOptionsWindow(); // Constrói o menu de opções do Mestre
     }
 
+    // ==========================================
+    // SISTEMA DE OPÇÕES E MODO JANELA
+    // ==========================================
+    private void BuildOptionsWindow()
+    {
+        GameObject mainCanvasGO = GameObject.Find("MainCanvas");
+        Canvas cv = mainCanvasGO != null ? mainCanvasGO.GetComponent<Canvas>() : FindAnyObjectByType<Canvas>();
+        if (cv == null) return;
+
+        optionsWindow = new GameObject("OptionsMenuWindow");
+        RectTransform winRT = optionsWindow.AddComponent<RectTransform>();
+        winRT.SetParent(cv.transform, false);
+        winRT.sizeDelta = new Vector2(350f, 400f);
+        winRT.anchorMin = new Vector2(0.5f, 0.5f); winRT.anchorMax = new Vector2(0.5f, 0.5f);
+        winRT.pivot = new Vector2(0.5f, 0.5f);
+
+        Image bg = optionsWindow.AddComponent<Image>();
+        bg.color = new Color(0.12f, 0.12f, 0.12f, 0.98f);
+        VTTLayout.AccentBar(winRT, 4f, VTTLayout.C_ACCENT);
+
+        GameObject titleGO = new GameObject("Title");
+        RectTransform titleRT = titleGO.AddComponent<RectTransform>();
+        titleRT.SetParent(winRT, false);
+        titleRT.anchorMin = new Vector2(0, 1); titleRT.anchorMax = new Vector2(1, 1);
+        titleRT.pivot = new Vector2(0.5f, 1);
+        titleRT.anchoredPosition = new Vector2(0, -30f);
+        titleRT.sizeDelta = new Vector2(0, 40f);
+        TMP_Text titleTxt = titleGO.AddComponent<TextMeshProUGUI>();
+        titleTxt.text = "CONFIGURAÇÕES (ESC)";
+        titleTxt.alignment = TextAlignmentOptions.Center;
+        titleTxt.fontSize = 20;
+        titleTxt.fontStyle = FontStyles.Bold;
+        titleTxt.color = Color.white;
+
+        // Botões
+        Button btnWin = BuildOptionBtn(winRT, "TELA: Modo Janela", new Vector2(0, 90));
+        btnWin.onClick.AddListener(() => SetFullscreenMode(false));
+
+        Button btnFull = BuildOptionBtn(winRT, "TELA: Tela Cheia", new Vector2(0, 40));
+        btnFull.onClick.AddListener(() => SetFullscreenMode(true));
+
+        Button btnDig = BuildOptionBtn(winRT, "MODO: Digital Sync", new Vector2(0, -30));
+        btnDig.onClick.AddListener(() => SetVTTMode(VTTMode.Digital_Sync));
+
+        Button btnPhys = BuildOptionBtn(winRT, "MODO: Mesa Física", new Vector2(0, -80));
+        btnPhys.onClick.AddListener(() => SetVTTMode(VTTMode.Physical_Table));
+
+        Button btnClose = BuildOptionBtn(winRT, "FECHAR", new Vector2(0, -150));
+        btnClose.onClick.AddListener(() => optionsWindow.SetActive(false));
+        btnClose.GetComponent<Image>().color = new Color(0.6f, 0.2f, 0.2f);
+
+        optionsWindow.SetActive(false); // Começa escondido
+    }
+
+    private Button BuildOptionBtn(RectTransform parent, string text, Vector2 pos)
+    {
+        GameObject go = new GameObject("Btn_" + text);
+        RectTransform rt = go.AddComponent<RectTransform>();
+        rt.SetParent(parent, false);
+        rt.anchorMin = new Vector2(0.5f, 0.5f); rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = pos;
+        rt.sizeDelta = new Vector2(280f, 40f);
+
+        Image img = go.AddComponent<Image>();
+        img.color = new Color(0.25f, 0.25f, 0.25f);
+
+        GameObject txtGo = new GameObject("Text");
+        RectTransform txtRt = txtGo.AddComponent<RectTransform>();
+        txtRt.SetParent(rt, false);
+        txtRt.anchorMin = Vector2.zero; txtRt.anchorMax = Vector2.one;
+        txtRt.offsetMin = Vector2.zero; txtRt.offsetMax = Vector2.zero;
+
+        TMP_Text t = txtGo.AddComponent<TextMeshProUGUI>();
+        t.text = text;
+        t.color = Color.white;
+        t.fontSize = 16f;
+        t.alignment = TextAlignmentOptions.Center;
+        t.fontStyle = FontStyles.Bold;
+
+        return go.AddComponent<Button>();
+    }
+
+    public void SetFullscreenMode(bool fullscreen)
+    {
+        isFullscreenPref = fullscreen;
+        if (fullscreen)
+        {
+            Screen.SetResolution(Screen.currentResolution.width, Screen.currentResolution.height, FullScreenMode.FullScreenWindow);
+        }
+        else
+        {
+            Screen.SetResolution(1280, 720, FullScreenMode.Windowed);
+        }
+    }
+
+    public void SetVTTMode(VTTMode newMode)
+    {
+        currentMode = newMode;
+        Debug.Log("VTT Mode alterado para: " + newMode.ToString());
+        if (optionsWindow != null) optionsWindow.SetActive(false);
+    }
+
+    // ==========================================
+    // JANELA DE VISÃO FLUTUANTE
+    // ==========================================
     private void BuildFloatingWindow()
     {
         GameObject mainCanvasGO = GameObject.Find("MainCanvas");
@@ -286,20 +413,37 @@ public class PlayerDisplaySystem : MonoBehaviour
         if (targetDisplayIndex >= Display.displays.Length) targetDisplayIndex = 1;
     }
 
+    // ==========================================
+    // EJETAR ALVO (ENVIO PARA O PROJETOR)
+    // ==========================================
     public void SendToMonitor()
     {
         if (Display.displays.Length > 1 && targetDisplayIndex < Display.displays.Length)
         {
-            Display.displays[targetDisplayIndex].Activate();
+            // O uso de parâmetros no Activate() ajuda a Unity a não "sequestrar" todos os monitores
+            Display.displays[targetDisplayIndex].Activate(1920, 1080, 60);
+
             playerCam.targetTexture = null;
             playerCam.targetDisplay = targetDisplayIndex;
             CloseWindow();
             Debug.Log("Sinal enviado para o " + GetCurrentDisplayName());
+
+            // Garante que o monitor do mestre NÃO vá para tela cheia por acidente!
+            StartCoroutine(EnforceScreenModeRoutine());
         }
         else
         {
             Debug.LogWarning("O monitor selecionado não está conectado no Windows!");
         }
+    }
+
+    private IEnumerator EnforceScreenModeRoutine()
+    {
+        // Espera alguns frames para a Unity processar a ativação do segundo monitor
+        yield return new WaitForSeconds(0.2f);
+
+        // Re-aplica a preferência do Mestre (ex: Modo Janela) na tela principal
+        SetFullscreenMode(isFullscreenPref);
     }
 
     private void LateUpdate()
