@@ -87,7 +87,7 @@ public class GMUIController : MonoBehaviour
 
     private void Update()
     {
-        SyncZoom(); SyncMouseCoord(); SyncFogState();
+        SyncZoom(); SyncMouseCoord(); SyncFogState(); 
     }
 
     private void BuildUI()
