@@ -1,4 +1,4 @@
-#include <Windows.h>
+Ôªø#include <Windows.h>
 #include <Ole2.h>
 #include <NuiApi.h>
 #include <iostream>
@@ -10,12 +10,12 @@ using namespace std;
 using namespace cv;
 
 // ==========================================
-// MACRO PARA EXPORTAR FUN«’ES PARA A UNITY
+// MACRO PARA EXPORTAR FUN√á√ïES PARA A UNITY
 // ==========================================
 #define EXPORT_API extern "C" __declspec(dllexport)
 
 // ==========================================
-// ESTRUTURA DE MEM”RIA (TRACKING VTT PRO)
+// ESTRUTURA DE MEM√ìRIA (TRACKING VTT PRO)
 // ==========================================
 struct TrackedPiece {
     int id = -1;
@@ -27,7 +27,9 @@ struct TrackedPiece {
 };
 
 vector<TrackedPiece> activePieces;
-vector<TrackedPiece> exportPieces; // Lista filtrada sÛ com as peÁas v·lidas para a Unity
+vector<TrackedPiece> exportPieces; // Lista filtrada s√≥ com as pe√ßas v√°lidas para a Unity
+vector<Point> projectionROI;
+bool hasProjectionROI = false;
 
 int getAvailableId() {
     int id = 1;
@@ -48,7 +50,7 @@ struct Match {
 };
 
 // ==========================================
-// VARI¡VEIS GLOBAIS
+// VARI√ÅVEIS GLOBAIS
 // ==========================================
 bool isCalibrating = false;
 int calibFrameCount = 0;
@@ -63,8 +65,13 @@ HANDLE nextDepthFrameEvent;
 const int width = 640;
 const int height = 480;
 
+bool isInsideProjectionROI(const Point& p) {
+    if (!hasProjectionROI || projectionROI.size() < 4) return true;
+    return pointPolygonTest(projectionROI, Point2f((float)p.x, (float)p.y), false) >= 0.0;
+}
+
 // ==========================================
-// FUN«’ES EXPORTADAS PARA A UNITY
+// FUN√á√ïES EXPORTADAS PARA A UNITY
 // ==========================================
 
 EXPORT_API bool InitTracker() {
@@ -81,7 +88,7 @@ EXPORT_API bool InitTracker() {
     return true;
 }
 
-// A Unity chama esta funÁ„o quando o jogador clica no bot„o "Calibrar"
+// A Unity chama esta fun√ß√£o quando o jogador clica no bot√£o "Calibrar"
 EXPORT_API void StartCalibration() {
     isCalibrating = true;
     calibFrameCount = 0;
@@ -89,13 +96,35 @@ EXPORT_API void StartCalibration() {
     exportPieces.clear();
 }
 
-// A Unity chama esta funÁ„o para limpar a mesa virtual
+// A Unity chama esta fun√ß√£o para limpar a mesa virtual
 EXPORT_API void ResetTracker() {
     activePieces.clear();
     exportPieces.clear();
 }
 
-// A Unity chama esta funÁ„o TODO FRAME (no mÈtodo Update)
+// A Unity chama depois da calibracao dos 4 cantos da area projetada.
+// A ordem deve ser: TopLeft, TopRight, BottomLeft, BottomRight.
+EXPORT_API void SetProjectionROI(int tlx, int tly, int trx, int try_, int blx, int bly, int brx, int bry) {
+    projectionROI.clear();
+    projectionROI.push_back(Point(tlx, tly));
+    projectionROI.push_back(Point(trx, try_));
+    projectionROI.push_back(Point(brx, bry));
+    projectionROI.push_back(Point(blx, bly));
+    hasProjectionROI = true;
+
+    activePieces.clear();
+    exportPieces.clear();
+}
+
+// Usado durante recalibracao para nao deixar uma ROI antiga bloquear os novos cantos.
+EXPORT_API void ClearProjectionROI() {
+    hasProjectionROI = false;
+    projectionROI.clear();
+    activePieces.clear();
+    exportPieces.clear();
+}
+
+// A Unity chama esta fun√ß√£o TODO FRAME (no m√©todo Update)
 EXPORT_API void ProcessFrame() {
     if (!sensor) return;
 
@@ -134,7 +163,7 @@ EXPORT_API void ProcessFrame() {
             Mat outputView;
             cvtColor(displayDepth, outputView, COLOR_GRAY2BGR);
 
-            // CalibraÁ„o
+            // Calibra√ß√£o
             if (isCalibrating) {
                 if (calibFrameCount == 0) bgAccumulator = Mat::zeros(height, width, CV_32FC1);
 
@@ -184,6 +213,10 @@ EXPORT_API void ProcessFrame() {
 
                 vector<Point> currentCentroids;
 
+                if (hasProjectionROI && projectionROI.size() >= 4) {
+                    polylines(outputView, projectionROI, true, Scalar(0, 255, 255), 2);
+                }
+
                 for (size_t i = 0; i < contours.size(); i++) {
                     double area = contourArea(contours[i]);
 
@@ -196,7 +229,14 @@ EXPORT_API void ProcessFrame() {
                             if (m.m00 > 0) {
                                 int cx = (int)(m.m10 / m.m00);
                                 int cy = (int)(m.m01 / m.m00);
-                                currentCentroids.push_back(Point(cx, cy));
+                                Point centroid(cx, cy);
+
+                                if (!isInsideProjectionROI(centroid)) {
+                                    circle(outputView, centroid, 4, Scalar(80, 80, 80), 1);
+                                    continue;
+                                }
+
+                                currentCentroids.push_back(centroid);
                                 drawContours(outputView, contours, (int)i, Scalar(150, 255, 150), -1);
                             }
                         }
@@ -253,7 +293,7 @@ EXPORT_API void ProcessFrame() {
                     }
                 }
 
-                // Oclus„o
+                // Oclus√£o
                 for (int p = 0; p < (int)activePieces.size(); p++) {
                     if (!pieceMatched[p]) {
                         if (activePieces[p].position.x >= 0 && activePieces[p].position.x < width &&
@@ -302,10 +342,10 @@ EXPORT_API void ProcessFrame() {
                         return p.framesMissing > 90;
                     }), activePieces.end());
 
-                // Atualiza a lista de exportaÁ„o e desenha o HUD
+                // Atualiza a lista de exporta√ß√£o e desenha o HUD
                 exportPieces.clear();
                 for (const auto& p : activePieces) {
-                    if (p.isConfirmed) {
+                    if (p.isConfirmed && isInsideProjectionROI(p.position)) {
                         exportPieces.push_back(p); // Salva para enviar para a Unity
 
                         if (p.framesMissing == 0) {
@@ -320,7 +360,7 @@ EXPORT_API void ProcessFrame() {
                 }
             }
 
-            // Mostra as janelas de debug visual (Opcional, mas ˙til para ver o que a c‚mera est· enxergando)
+            // Mostra as janelas de debug visual (Opcional, mas √∫til para ver o que a c√¢mera est√° enxergando)
             imshow("VTT Kinect - Tracker Debug", outputView);
             imshow("VTT Kinect - Miolos", coreMask);
         }
@@ -329,16 +369,16 @@ EXPORT_API void ProcessFrame() {
         sensor->NuiImageStreamReleaseFrame(depthStream, &imageFrame);
     }
 
-    // Atualiza as janelas do OpenCV (Necess·rio para o imshow funcionar sem congelar)
+    // Atualiza as janelas do OpenCV (Necess√°rio para o imshow funcionar sem congelar)
     waitKey(1);
 }
 
-// Retorna quantas peÁas v·lidas est„o na mesa no momento
+// Retorna quantas pe√ßas v√°lidas est√£o na mesa no momento
 EXPORT_API int GetPieceCount() {
     return exportPieces.size();
 }
 
-// A Unity pede os dados de cada peÁa (ID, Coordenada X, Coordenada Y e Estado de Perda)
+// A Unity pede os dados de cada pe√ßa (ID, Coordenada X, Coordenada Y e Estado de Perda)
 EXPORT_API void GetPieceData(int index, int& id, int& x, int& y, int& isLost) {
     if (index >= 0 && index < exportPieces.size()) {
         id = exportPieces[index].id;
@@ -348,7 +388,7 @@ EXPORT_API void GetPieceData(int index, int& id, int& x, int& y, int& isLost) {
     }
 }
 
-// A Unity chama esta funÁ„o quando o jogo for fechado para desligar o laser do Kinect
+// A Unity chama esta fun√ß√£o quando o jogo for fechado para desligar o laser do Kinect
 EXPORT_API void StopTracker() {
     if (sensor) {
         sensor->NuiShutdown();

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Collections;
 using UnityEngine;
 using System.Runtime.InteropServices;
 
@@ -16,11 +17,13 @@ public class KinectManager : MonoBehaviour
     [DllImport(dllName)] public static extern void ResetTracker();
     [DllImport(dllName)] public static extern void ProcessFrame();
     [DllImport(dllName)] public static extern int GetPieceCount();
-    [DllImport(dllName)] public static extern void GetPieceData(int index, ref int id, ref int x, ref int y, ref int isLost, ref float area);
+    [DllImport(dllName)] public static extern void GetPieceData(int index, ref int id, ref int x, ref int y, ref int isLost);
+    [DllImport(dllName)] public static extern void SetProjectionROI(int tlx, int tly, int trx, int try_, int blx, int bly, int brx, int bry);
+    [DllImport(dllName)] public static extern void ClearProjectionROI();
     [DllImport(dllName)] public static extern void StopTracker();
 
     // ==========================================
-    // VARIÁVEIS DE CALIBRAÇÃO 
+    // VARIAVEIS DE CALIBRACAO
     // ==========================================
     private enum CalibStep { None, TopLeft, TopRight, BottomLeft, BottomRight }
     private CalibStep currentCalibStep = CalibStep.None;
@@ -31,13 +34,28 @@ public class KinectManager : MonoBehaviour
     public Vector2 calibBottomLeft = new Vector2(0, 480);
     public Vector2 calibBottomRight = new Vector2(640, 480);
 
-    [Header("Ajuste Fino de Precisão")]
-    [Tooltip("Move os tokens virtualmente para os lados (em centímetros/unidades) para casar perfeitamente com a lente do projetor.")]
+    [Header("Ajuste Fino de Precisao")]
+    [Tooltip("Move os tokens virtualmente para os lados (em centimetros/unidades) para casar perfeitamente com a lente do projetor.")]
     public float fineTuneX = 0f;
     [Tooltip("Move os tokens virtualmente para cima/baixo.")]
     public float fineTuneY = 0f;
 
-    [Header("Sistema de Recuperação")]
+    [Header("Area Util da Projecao")]
+    [Tooltip("Margem normalizada aceita fora da area calibrada. 0.03 = 3% para tolerar ruido nas bordas.")]
+    [Range(0f, 0.2f)]
+    public float roiMargin = 0.03f;
+
+    [Tooltip("Mostra dados de calibracao e mapeamento na tela para diagnostico.")]
+    public bool showCalibrationDebug = true;
+
+    [Tooltip("Quantidade de frames usados para calcular cada canto. Mais frames reduzem jitter do centroide.")]
+    [Range(1, 60)]
+    public int calibrationSampleFrames = 15;
+
+    [Tooltip("Se ligado, a calibracao so aceita um objeto detectado por frame. Ajuda a nao pegar a peca errada.")]
+    public bool requireSinglePieceForCornerCalibration = true;
+
+    [Header("Sistema de Recuperacao")]
     public float autoRebindDistance = 3.0f;
 
     private Dictionary<int, TokenController> boundTokens = new Dictionary<int, TokenController>();
@@ -46,6 +64,15 @@ public class KinectManager : MonoBehaviour
 
     private GameObject calibTargetVisual = null;
     private bool kinectBlinkWarning = false;
+
+    // Homografia Kinect pixel -> projection normalized space.
+    // h[8] is fixed to 1, so only 8 coefficients are stored.
+    private double[] kinectToProjectionHomography = null;
+    private Vector2 lastRawKinectPixel = Vector2.zero;
+    private Vector2 lastProjectionNormalized = Vector2.zero;
+    private Vector3 lastMappedWorldPosition = Vector3.zero;
+    private bool lastPointInsideProjection = false;
+    private bool isCapturingCalibrationPoint = false;
 
     private void Awake()
     {
@@ -56,15 +83,17 @@ public class KinectManager : MonoBehaviour
     void Start()
     {
         if (InitTracker()) Debug.Log("Kinect Conectado com Sucesso!");
-        else Debug.LogError("ERRO: Kinect não encontrado ou DLL faltando.");
+        else Debug.LogError("ERRO: Kinect nao encontrado ou DLL faltando.");
 
         LoadCalibration();
+        RebuildHomography();
+        ApplyProjectionROIToTracker();
     }
 
     public void StartBinding(TokenController token)
     {
         pendingBindingToken = token;
-        Debug.Log("VINCULAÇÃO: Coloque a miniatura física na mesa agora.");
+        Debug.Log("VINCULACAO: Coloque a miniatura fisica na mesa agora.");
     }
 
     void Update()
@@ -74,30 +103,24 @@ public class KinectManager : MonoBehaviour
 
         if (Input.GetKeyDown(KeyCode.C))
         {
+            ClearProjectionROISafe();
+            ResetTracker();
             currentCalibStep = CalibStep.TopLeft;
             UpdateCalibVisual();
-            Debug.Log("CALIBRAÇÃO: Coloque uma peça no ALVO VERMELHO.");
+            Debug.Log("CALIBRACAO: Coloque uma peca no ALVO VERMELHO.");
         }
 
         ProcessFrame();
         int count = GetPieceCount();
 
-        if (currentCalibStep != CalibStep.None && Input.GetKeyDown(KeyCode.Space))
+        if (currentCalibStep != CalibStep.None && Input.GetKeyDown(KeyCode.Space) && !isCapturingCalibrationPoint)
         {
-            if (count > 0)
-            {
-                kinectBlinkWarning = false;
-                int cId = 0, cX = 0, cY = 0, cLost = 0; float cArea = 0f;
-                GetPieceData(0, ref cId, ref cX, ref cY, ref cLost, ref cArea);
-                AdvanceCalibration(new Vector2(cX, cY));
-            }
-            else
-            {
-                kinectBlinkWarning = true;
-                Debug.LogWarning("O Kinect não enxergou a peça neste frame. Mexa um pouco e aperte Espaço novamente!");
-            }
+            StartCoroutine(CaptureCalibrationPointRoutine());
             return;
         }
+
+        if (isCapturingCalibrationPoint)
+            return;
 
         HashSet<int> idsThisFrame = new HashSet<int>();
         orphanedTokens.RemoveAll(t => t == null);
@@ -112,29 +135,33 @@ public class KinectManager : MonoBehaviour
         for (int i = 0; i < count; i++)
         {
             int id = 0, x = 0, y = 0, isLost = 0;
-            float rawArea = 0f;
-            GetPieceData(i, ref id, ref x, ref y, ref isLost, ref rawArea);
+            GetPieceData(i, ref id, ref x, ref y, ref isLost);
 
             Vector2 currentKinectPixel = new Vector2(x, y);
-            Vector2 normalizedCoords = BilinearMapping(currentKinectPixel);
+            Vector2 normalizedCoords = KinectPixelToProjection(currentKinectPixel);
 
-            // =================================================================
-            // ISOLAMENTO DE ÁREA (CLIPPING): Ignora peças fora da calibração!
-            // Dou uma margem de 5% (-0.05 a 1.05) para não bugar peças que estão exatamente em cima da linha.
-            // =================================================================
-            if (normalizedCoords.x < -0.05f || normalizedCoords.x > 1.05f ||
-                normalizedCoords.y < -0.05f || normalizedCoords.y > 1.05f)
+            lastRawKinectPixel = currentKinectPixel;
+            lastProjectionNormalized = normalizedCoords;
+
+            lastPointInsideProjection =
+                !float.IsNaN(normalizedCoords.x) && !float.IsNaN(normalizedCoords.y) &&
+                normalizedCoords.x >= -roiMargin && normalizedCoords.x <= 1f + roiMargin &&
+                normalizedCoords.y >= -roiMargin && normalizedCoords.y <= 1f + roiMargin;
+
+            if (!lastPointInsideProjection)
             {
-                continue; // Pula esta peça e finge que o Kinect não a viu
+                continue;
             }
 
-            // Se a peça passou do filtro, validamos o ID
+            normalizedCoords.x = Mathf.Clamp01(normalizedCoords.x);
+            normalizedCoords.y = Mathf.Clamp01(normalizedCoords.y);
+
             idsThisFrame.Add(id);
 
-            // Aplica a posição no mapa somando o Ajuste Fino Manual (Fine Tune)
             float worldX = Mathf.Lerp(mapBounds.min.x, mapBounds.max.x, normalizedCoords.x) + fineTuneX;
             float worldY = Mathf.Lerp(mapBounds.max.y, mapBounds.min.y, normalizedCoords.y) + fineTuneY;
             Vector3 worldPosition = new Vector3(worldX, worldY, 0f);
+            lastMappedWorldPosition = worldPosition;
 
             if (!boundTokens.ContainsKey(id))
             {
@@ -209,7 +236,6 @@ public class KinectManager : MonoBehaviour
             tex.SetPixel(0, 0, Color.red);
             tex.Apply();
 
-            // Centraliza o ponto (0.5f, 0.5f) para alinhar a miniatura exatamente no meio
             sr.sprite = Sprite.Create(tex, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f), 1f);
             sr.sortingOrder = 9999;
         }
@@ -217,7 +243,6 @@ public class KinectManager : MonoBehaviour
         float idealSize = Mathf.Min(mapBounds.size.x, mapBounds.size.y) * 0.05f;
         calibTargetVisual.transform.localScale = new Vector3(idealSize, idealSize, 1f);
 
-        // Removemos o offset. Agora o centro do alvo é a quina absoluta do mapa.
         Vector3 pos = Vector3.zero;
         if (currentCalibStep == CalibStep.TopLeft) pos = new Vector3(mapBounds.min.x, mapBounds.max.y, -5f);
         if (currentCalibStep == CalibStep.TopRight) pos = new Vector3(mapBounds.max.x, mapBounds.max.y, -5f);
@@ -234,26 +259,218 @@ public class KinectManager : MonoBehaviour
             case CalibStep.TopLeft: calibTopLeft = pixel; currentCalibStep = CalibStep.TopRight; break;
             case CalibStep.TopRight: calibTopRight = pixel; currentCalibStep = CalibStep.BottomLeft; break;
             case CalibStep.BottomLeft: calibBottomLeft = pixel; currentCalibStep = CalibStep.BottomRight; break;
-            case CalibStep.BottomRight: calibBottomRight = pixel; currentCalibStep = CalibStep.None; SaveCalibration(); break;
+            case CalibStep.BottomRight:
+                calibBottomRight = pixel;
+                currentCalibStep = CalibStep.None;
+                RebuildHomography();
+                SaveCalibration();
+                ApplyProjectionROIToTracker();
+                break;
         }
         UpdateCalibVisual();
     }
 
-    private Vector2 BilinearMapping(Vector2 p)
+    private IEnumerator CaptureCalibrationPointRoutine()
     {
-        // Alterado de InverseLerp (que trava em 0 e 1) para matemática pura,
-        // permitindo que o sistema detecte quando a peça escapou para fora da área projetada (< 0 ou > 1).
-        float u = InverseLerpUnclamped(Mathf.Lerp(calibTopLeft.x, calibBottomLeft.x, (p.y / 480f)), Mathf.Lerp(calibTopRight.x, calibBottomRight.x, (p.y / 480f)), p.x);
-        float v = InverseLerpUnclamped(Mathf.Lerp(calibTopLeft.y, calibTopRight.y, (p.x / 640f)), Mathf.Lerp(calibBottomLeft.y, calibBottomRight.y, (p.x / 640f)), p.y);
+        isCapturingCalibrationPoint = true;
+        kinectBlinkWarning = false;
 
-        return new Vector2(u, v);
+        Vector2 sum = Vector2.zero;
+        int samples = 0;
+
+        for (int frame = 0; frame < calibrationSampleFrames; frame++)
+        {
+            yield return null;
+
+            if (TryGetCalibrationPiecePixel(out Vector2 pixel))
+            {
+                sum += pixel;
+                samples++;
+            }
+        }
+
+        if (samples > 0)
+        {
+            AdvanceCalibration(sum / samples);
+        }
+        else
+        {
+            kinectBlinkWarning = true;
+            Debug.LogWarning("CALIBRACAO: nenhum frame valido capturado. Deixe apenas uma peca no alvo vermelho e tente novamente.");
+        }
+
+        isCapturingCalibrationPoint = false;
     }
 
-    // Função de interpolação livre auxiliar
-    private float InverseLerpUnclamped(float a, float b, float value)
+    private bool TryGetCalibrationPiecePixel(out Vector2 pixel)
     {
-        if (a != b) return (value - a) / (b - a);
-        return 0f;
+        pixel = Vector2.zero;
+
+        int count = GetPieceCount();
+        if (count <= 0)
+            return false;
+
+        if (requireSinglePieceForCornerCalibration && count != 1)
+        {
+            Debug.LogWarning($"CALIBRACAO: {count} pecas detectadas. Remova objetos extras para nao calibrar pelo centroide errado.");
+            return false;
+        }
+
+        int id = 0, x = 0, y = 0, isLost = 0;
+        GetPieceData(0, ref id, ref x, ref y, ref isLost);
+
+        if (isLost == 1)
+            return false;
+
+        pixel = new Vector2(x, y);
+        return true;
+    }
+
+    private Vector2 KinectPixelToProjection(Vector2 p)
+    {
+        if (kinectToProjectionHomography == null)
+            RebuildHomography();
+
+        if (kinectToProjectionHomography == null)
+            return new Vector2(float.NaN, float.NaN);
+
+        double x = p.x;
+        double y = p.y;
+        double den = kinectToProjectionHomography[6] * x + kinectToProjectionHomography[7] * y + 1.0;
+
+        if (System.Math.Abs(den) < 0.000001)
+            return new Vector2(float.NaN, float.NaN);
+
+        double u = (kinectToProjectionHomography[0] * x + kinectToProjectionHomography[1] * y + kinectToProjectionHomography[2]) / den;
+        double v = (kinectToProjectionHomography[3] * x + kinectToProjectionHomography[4] * y + kinectToProjectionHomography[5]) / den;
+
+        return new Vector2((float)u, (float)v);
+    }
+
+    private void RebuildHomography()
+    {
+        Vector2[] src =
+        {
+            calibTopLeft,
+            calibTopRight,
+            calibBottomLeft,
+            calibBottomRight
+        };
+
+        Vector2[] dst =
+        {
+            new Vector2(0f, 0f),
+            new Vector2(1f, 0f),
+            new Vector2(0f, 1f),
+            new Vector2(1f, 1f)
+        };
+
+        kinectToProjectionHomography = SolveHomography(src, dst);
+    }
+
+    private void ApplyProjectionROIToTracker()
+    {
+        if (kinectToProjectionHomography == null)
+            return;
+
+        SetProjectionROISafe(
+            Mathf.RoundToInt(calibTopLeft.x), Mathf.RoundToInt(calibTopLeft.y),
+            Mathf.RoundToInt(calibTopRight.x), Mathf.RoundToInt(calibTopRight.y),
+            Mathf.RoundToInt(calibBottomLeft.x), Mathf.RoundToInt(calibBottomLeft.y),
+            Mathf.RoundToInt(calibBottomRight.x), Mathf.RoundToInt(calibBottomRight.y));
+    }
+
+    private void SetProjectionROISafe(int tlx, int tly, int trx, int try_, int blx, int bly, int brx, int bry)
+    {
+        try
+        {
+            SetProjectionROI(tlx, tly, trx, try_, blx, bly, brx, bry);
+        }
+        catch (System.EntryPointNotFoundException)
+        {
+            Debug.LogWarning("[KinectManager] DLL atual ainda nao possui SetProjectionROI. Recompile a DLL para ativar a ROI nativa.");
+        }
+    }
+
+    private void ClearProjectionROISafe()
+    {
+        try
+        {
+            ClearProjectionROI();
+        }
+        catch (System.EntryPointNotFoundException)
+        {
+            Debug.LogWarning("[KinectManager] DLL atual ainda nao possui ClearProjectionROI. Recompile a DLL para ativar a ROI nativa.");
+        }
+    }
+
+    private double[] SolveHomography(Vector2[] src, Vector2[] dst)
+    {
+        double[,] a = new double[8, 9];
+
+        for (int i = 0; i < 4; i++)
+        {
+            double x = src[i].x;
+            double y = src[i].y;
+            double u = dst[i].x;
+            double v = dst[i].y;
+            int r = i * 2;
+
+            a[r, 0] = x; a[r, 1] = y; a[r, 2] = 1.0;
+            a[r, 6] = -u * x; a[r, 7] = -u * y; a[r, 8] = u;
+
+            a[r + 1, 3] = x; a[r + 1, 4] = y; a[r + 1, 5] = 1.0;
+            a[r + 1, 6] = -v * x; a[r + 1, 7] = -v * y; a[r + 1, 8] = v;
+        }
+
+        for (int col = 0; col < 8; col++)
+        {
+            int pivot = col;
+            double best = System.Math.Abs(a[pivot, col]);
+            for (int row = col + 1; row < 8; row++)
+            {
+                double candidate = System.Math.Abs(a[row, col]);
+                if (candidate > best)
+                {
+                    best = candidate;
+                    pivot = row;
+                }
+            }
+
+            if (best < 0.000001)
+            {
+                Debug.LogError("[KinectManager] Calibracao invalida: os 4 pontos nao formam um quadrilatero utilizavel.");
+                return null;
+            }
+
+            if (pivot != col)
+            {
+                for (int k = col; k < 9; k++)
+                {
+                    double temp = a[col, k];
+                    a[col, k] = a[pivot, k];
+                    a[pivot, k] = temp;
+                }
+            }
+
+            double div = a[col, col];
+            for (int k = col; k < 9; k++)
+                a[col, k] /= div;
+
+            for (int row = 0; row < 8; row++)
+            {
+                if (row == col) continue;
+                double factor = a[row, col];
+                for (int k = col; k < 9; k++)
+                    a[row, k] -= factor * a[col, k];
+            }
+        }
+
+        double[] h = new double[8];
+        for (int i = 0; i < 8; i++)
+            h[i] = a[i, 8];
+
+        return h;
     }
 
     private void SaveCalibration()
@@ -274,6 +491,7 @@ public class KinectManager : MonoBehaviour
             calibBottomLeft = new Vector2(PlayerPrefs.GetFloat("CalibBL_X"), PlayerPrefs.GetFloat("CalibBL_Y"));
             calibBottomRight = new Vector2(PlayerPrefs.GetFloat("CalibBR_X"), PlayerPrefs.GetFloat("CalibBR_Y"));
         }
+        RebuildHomography();
     }
 
     private void OnGUI()
@@ -294,6 +512,19 @@ public class KinectManager : MonoBehaviour
 
             GUI.color = Color.white;
             GUI.Box(new Rect(Screen.width / 2 - 250, Screen.height / 2 - 0, 500, 40), "CALIBRACAO: Coloque a peca sobre o quadrado VERMELHO e aperte ESPACO.");
+        }
+
+        if (showCalibrationDebug)
+        {
+            GUI.color = lastPointInsideProjection ? Color.green : Color.red;
+            GUI.Box(
+                new Rect(20, Screen.height - 145, 460, 120),
+                "KINECT DEBUG\n" +
+                $"Raw px: {lastRawKinectPixel.x:F0}, {lastRawKinectPixel.y:F0}\n" +
+                $"Proj 0..1: {lastProjectionNormalized.x:F3}, {lastProjectionNormalized.y:F3}\n" +
+                $"World: {lastMappedWorldPosition.x:F2}, {lastMappedWorldPosition.y:F2}\n" +
+                $"ROI: {(lastPointInsideProjection ? "DENTRO" : "FORA")}  margem={roiMargin:F2}\n" +
+                $"Amostrando canto: {(isCapturingCalibrationPoint ? "SIM" : "NAO")}");
         }
     }
 
