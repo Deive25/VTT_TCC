@@ -10,8 +10,6 @@ using TMPro;
 // Enumeração para os formatos de visão
 public enum VisionShape { Circle = 0, Square = 1, Cone = 2 }
 
-
-
 public class TokenController : MonoBehaviour
 {
     public string charId;
@@ -26,7 +24,13 @@ public class TokenController : MonoBehaviour
     public bool revealsFog = true;
     public VisionShape visionShape = VisionShape.Circle;
     public float visionRadius = 3f;
-    public float visionAngle = 90f; // Ângulo do c
+    public float visionAngle = 90f; // Ângulo do cone
+
+    // --- VARIÁVEIS PARA SUAVIZAÇÃO (SMOOTHDAMP) E ZONA MORTA ---
+    private Vector3 _currentVelocity;
+    public float smoothTime = 0.15f;  // Tempo de suavização do movimento.
+    public float deadzone = 0.08f;    // Distância mínima para registar movimento (ignora ruídos).
+    private Vector3 _lastFogPos;      // Evita atualizar a névoa se o token não se moveu significativamente.
 
     private Vector3 offset;
     private Vector3 dragStartMousePos;
@@ -45,6 +49,7 @@ public class TokenController : MonoBehaviour
         _fogController = FindAnyObjectByType<FogOfWarController>();
         _mainCam = Camera.main;
         _spriteRenderer = GetComponent<SpriteRenderer>();
+        _lastFogPos = transform.position;
     }
 
     public void SetBorderColor(Color color) { if (borderRenderer != null) borderRenderer.color = color; }
@@ -73,7 +78,8 @@ public class TokenController : MonoBehaviour
         }
     }
 
-    public void SetLostState(bool isLost) {
+    public void SetLostState(bool isLost)
+    {
         float alpha = isLost ? 0.35f : 1f;
         if (_spriteRenderer != null)
         {
@@ -88,12 +94,34 @@ public class TokenController : MonoBehaviour
             borderRenderer.color = c;
         }
     }
+
     public void UpdatePositionFromKinect(Vector3 worldPos)
     {
-        _targetKinectPos = new Vector3(worldPos.x, worldPos.y, transform.position.z);
-        transform.position = Vector3.Lerp(transform.position, _targetKinectPos, Time.deltaTime * 15f);
+        // 1. ZONA MORTA (Deadzone): Calcula a distância do novo ponto para o alvo atual
+        float distance = Vector2.Distance(worldPos, _targetKinectPos);
 
-        RevealFogIfEnabled();
+        // Se o movimento for maior que a zona morta, atualiza o alvo. 
+        if (distance > deadzone)
+        {
+            _targetKinectPos = new Vector3(worldPos.x, worldPos.y, transform.position.z);
+        }
+    }
+
+    private void Update()
+    {
+        // 2. DESACOPLAMENTO: O movimento real acontece aqui, na taxa de quadros da Unity (60+ FPS)
+        if (isPlaced && kinectTrackingId != -1)
+        {
+            // Vector3.SmoothDamp amortece o movimento, eliminando os "flicks" e saltos bruscos
+            transform.position = Vector3.SmoothDamp(transform.position, _targetKinectPos, ref _currentVelocity, smoothTime);
+
+            // Otimização: Só atualiza a textura da Névoa de Guerra se a peça realmente se moveu
+            if (Vector3.Distance(transform.position, _lastFogPos) > 0.05f)
+            {
+                RevealFogIfEnabled();
+                _lastFogPos = transform.position;
+            }
+        }
     }
 
     private void OnMouseOver()
@@ -128,10 +156,13 @@ public class TokenController : MonoBehaviour
 
     void OnMouseDown()
     {
+        // GRAVAMOS O CLIQUE SEMPRE! Isso permite que o OnMouseUpAsButton funcione no modo Kinect.
+        dragStartMousePos = Input.mousePosition;
+
+        // Só bloqueamos o ARRASTE se for o modo físico. O clique está liberado.
         if (kinectTrackingId != -1 && PlayerDisplaySystem.Instance != null && PlayerDisplaySystem.Instance.currentMode == VTTMode.Physical_Table)
             return;
 
-        dragStartMousePos = Input.mousePosition;
         offset = transform.position - _mainCam.ScreenToWorldPoint(Input.mousePosition);
         offset.z = 0;
     }
@@ -140,6 +171,7 @@ public class TokenController : MonoBehaviour
     {
         if (!isPlaced) return;
 
+        // Se for um token físico, ignoramos o arraste do rato para não conflitar com o Kinect
         if (kinectTrackingId != -1 && PlayerDisplaySystem.Instance != null && PlayerDisplaySystem.Instance.currentMode == VTTMode.Physical_Table)
             return;
 
@@ -160,32 +192,31 @@ public class TokenController : MonoBehaviour
 
     void OnMouseUpAsButton()
     {
+        // Se o rato mal se moveu desde o OnMouseDown, consideramos um clique e abrimos a UI
         if (Vector3.Distance(dragStartMousePos, Input.mousePosition) < 5f)
         {
             TokenSystem.Instance.OpenMiniUI(this);
         }
     }
 
-    // Modifique no arquivo TokenController ou TokenSystem
     public void FollowMouse()
     {
         Camera mainCam = Camera.main;
 
-        // 1. Verificação de segurança (Impede o NullReferenceException)
         if (mainCam == null)
         {
-            Debug.LogWarning("[TokenSystem] Câmera Principal não encontrada! Verifique se sua câmera tem a tag 'MainCamera'.");
+            Debug.LogWarning("[TokenSystem] Câmara Principal não encontrada! Verifique se a sua câmara tem a tag 'MainCamera'.");
             return;
         }
 
         Vector3 mousePos = Input.mousePosition;
 
-        // 2. Definimos o Z com base na posição da câmera para o cálculo do ScreenToWorldPoint funcionar corretamente
+        // Definimos o Z com base na posição da câmara para o cálculo do ScreenToWorldPoint funcionar corretamente
         mousePos.z = -mainCam.transform.position.z;
 
         Vector3 worldPos = mainCam.ScreenToWorldPoint(mousePos);
 
-        // 3. Travamos o Z em 0f para o ambiente de tabuleiro 2D
+        // Travamos o Z em 0f para o ambiente de tabuleiro 2D
         transform.position = new Vector3(worldPos.x, worldPos.y, 0f);
     }
 

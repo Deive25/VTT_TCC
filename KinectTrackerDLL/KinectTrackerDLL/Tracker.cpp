@@ -20,10 +20,14 @@ using namespace cv;
 struct TrackedPiece {
     int id = -1;
     Point position = Point(0, 0);
+    Point2f filteredPosition = Point2f(0, 0);
+    Point2f velocity = Point2f(0, 0);
+    double lastArea = 0.0;
     int framesMissing = 0;
     int framesVisible = 0;
     int framesOccluded = 0;
     bool isConfirmed = false;
+    bool initialized = false;
 };
 
 vector<TrackedPiece> activePieces;
@@ -49,6 +53,14 @@ struct Match {
     double dist;
 };
 
+struct PieceCandidate {
+    Point centroid = Point(0, 0);
+    double area = 0.0;
+    double circularity = 0.0;
+    Rect bbox;
+    bool nearHand = false;
+};
+
 // ==========================================
 // VARIÁVEIS GLOBAIS
 // ==========================================
@@ -65,9 +77,93 @@ HANDLE nextDepthFrameEvent;
 const int width = 640;
 const int height = 480;
 
+const double minPieceArea = 12.0;
+const double maxPieceArea = 900.0;
+const double minPieceCircularity = 0.32;
+const double maxPieceAspect = 2.0;
+const double duplicateCentroidDistance = 18.0;
+const double baseMatchDistance = 45.0;
+const double reacquireMatchDistance = 125.0;
+const double handReacquireDistance = 75.0;
+const double smoothingAlpha = 0.45;
+const int framesToConfirmPiece = 6;
+const int maxOcclusionFrames = 120;
+const int maxMissingFrames = 75;
+
 bool isInsideProjectionROI(const Point& p) {
     if (!hasProjectionROI || projectionROI.size() < 4) return true;
     return pointPolygonTest(projectionROI, Point2f((float)p.x, (float)p.y), false) >= 0.0;
+}
+
+static Point toPoint(const Point2f& p) {
+    return Point((int)round(p.x), (int)round(p.y));
+}
+
+static double distanceBetween(const Point& a, const Point& b) {
+    return norm(a - b);
+}
+
+static void updatePiecePosition(TrackedPiece& piece, const Point& measured, double area) {
+    Point2f measuredF((float)measured.x, (float)measured.y);
+
+    if (!piece.initialized) {
+        piece.filteredPosition = measuredF;
+        piece.velocity = Point2f(0, 0);
+        piece.initialized = true;
+    }
+    else {
+        Point2f previous = piece.filteredPosition;
+        piece.filteredPosition = previous + (measuredF - previous) * (float)smoothingAlpha;
+        piece.velocity = piece.filteredPosition - previous;
+    }
+
+    piece.position = toPoint(piece.filteredPosition);
+    piece.lastArea = area;
+    piece.framesMissing = 0;
+    piece.framesOccluded = 0;
+    piece.framesVisible++;
+}
+
+static bool isPointInMask(const Mat& mask, const Point& p) {
+    if (p.x < 0 || p.x >= mask.cols || p.y < 0 || p.y >= mask.rows) return false;
+    return mask.at<uchar>(p.y, p.x) > 0;
+}
+
+static bool isNearTrackedPiece(const Point& point, double maxDistance) {
+    for (const auto& piece : activePieces) {
+        if (distanceBetween(piece.position, point) <= maxDistance) return true;
+    }
+    return false;
+}
+
+static void addMergedCandidate(vector<PieceCandidate>& candidates, const PieceCandidate& candidate) {
+    int bestIndex = -1;
+    double bestDist = duplicateCentroidDistance;
+
+    for (int i = 0; i < (int)candidates.size(); i++) {
+        double dist = distanceBetween(candidates[i].centroid, candidate.centroid);
+        if (dist < bestDist) {
+            bestDist = dist;
+            bestIndex = i;
+        }
+    }
+
+    if (bestIndex < 0) {
+        candidates.push_back(candidate);
+        return;
+    }
+
+    PieceCandidate& existing = candidates[bestIndex];
+    double totalArea = max(1.0, existing.area + candidate.area);
+    Point2f mixed =
+        Point2f((float)existing.centroid.x, (float)existing.centroid.y) * (float)(existing.area / totalArea) +
+        Point2f((float)candidate.centroid.x, (float)candidate.centroid.y) * (float)(candidate.area / totalArea);
+
+    existing.centroid = toPoint(mixed);
+    existing.area = max(existing.area, candidate.area);
+    existing.circularity = max(existing.circularity, candidate.circularity);
+    existing.bbox = existing.bbox | candidate.bbox;
+    existing.nearHand = existing.nearHand || candidate.nearHand;
 }
 
 // ==========================================
@@ -211,7 +307,7 @@ EXPORT_API void ProcessFrame() {
                 vector<vector<Point>> contours;
                 findContours(coreMask, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 
-                vector<Point> currentCentroids;
+                vector<PieceCandidate> currentCandidates;
 
                 if (hasProjectionROI && projectionROI.size() >= 4) {
                     polylines(outputView, projectionROI, true, Scalar(0, 255, 255), 2);
@@ -220,11 +316,15 @@ EXPORT_API void ProcessFrame() {
                 for (size_t i = 0; i < contours.size(); i++) {
                     double area = contourArea(contours[i]);
 
-                    if (area > 5.0 && area < 1500.0) {
+                    if (area >= minPieceArea && area <= maxPieceArea) {
                         Rect bbox = boundingRect(contours[i]);
                         float aspect = (float)bbox.width / (float)bbox.height;
+                        if (aspect < 1.0f) aspect = 1.0f / max(aspect, 0.001f);
 
-                        if (aspect > 0.4f && aspect < 2.5f) {
+                        double perimeter = arcLength(contours[i], true);
+                        double circularity = perimeter > 0.0 ? (4.0 * CV_PI * area) / (perimeter * perimeter) : 0.0;
+
+                        if (aspect <= maxPieceAspect && circularity >= minPieceCircularity) {
                             Moments m = moments(contours[i]);
                             if (m.m00 > 0) {
                                 int cx = (int)(m.m10 / m.m00);
@@ -236,7 +336,21 @@ EXPORT_API void ProcessFrame() {
                                     continue;
                                 }
 
-                                currentCentroids.push_back(centroid);
+                                bool nearHand = isPointInMask(maskHands, centroid);
+                                bool strongPieceShape = circularity >= 0.58 && area >= minPieceArea * 1.5 && area <= maxPieceArea * 0.75;
+                                if (nearHand && !isNearTrackedPiece(centroid, handReacquireDistance) && !strongPieceShape) {
+                                    circle(outputView, centroid, 5, Scalar(80, 80, 255), 1);
+                                    continue;
+                                }
+
+                                PieceCandidate candidate;
+                                candidate.centroid = centroid;
+                                candidate.area = area;
+                                candidate.circularity = circularity;
+                                candidate.bbox = bbox;
+                                candidate.nearHand = nearHand;
+
+                                addMergedCandidate(currentCandidates, candidate);
                                 drawContours(outputView, contours, (int)i, Scalar(150, 255, 150), -1);
                             }
                         }
@@ -245,8 +359,9 @@ EXPORT_API void ProcessFrame() {
 
                 vector<Match> matches;
                 for (int p = 0; p < (int)activePieces.size(); p++) {
-                    for (int c = 0; c < (int)currentCentroids.size(); c++) {
-                        double d = norm(activePieces[p].position - currentCentroids[c]);
+                    Point predicted = activePieces[p].position + toPoint(activePieces[p].velocity);
+                    for (int c = 0; c < (int)currentCandidates.size(); c++) {
+                        double d = norm(predicted - currentCandidates[c].centroid);
                         matches.push_back({ p, c, d });
                     }
                 }
@@ -256,20 +371,20 @@ EXPORT_API void ProcessFrame() {
                     });
 
                 vector<bool> pieceMatched(activePieces.size(), false);
-                vector<bool> centroidMatched(currentCentroids.size(), false);
+                vector<bool> centroidMatched(currentCandidates.size(), false);
 
-                // Passagem 1
+                // Passagem 1: associacao principal com gate dinamico.
                 for (const auto& m : matches) {
                     if (!pieceMatched[m.pieceIdx] && !centroidMatched[m.centroidIdx]) {
-                        double maxDist = (activePieces[m.pieceIdx].framesMissing > 0) ? 150.0 : 40.0;
+                        const PieceCandidate& candidate = currentCandidates[m.centroidIdx];
+                        double maxDist = (activePieces[m.pieceIdx].framesMissing > 0) ? reacquireMatchDistance : baseMatchDistance;
+                        maxDist += min(45.0, norm(activePieces[m.pieceIdx].velocity) * 2.0);
+                        if (candidate.nearHand) maxDist = min(maxDist, handReacquireDistance);
 
                         if (m.dist < maxDist) {
-                            activePieces[m.pieceIdx].position = currentCentroids[m.centroidIdx];
-                            activePieces[m.pieceIdx].framesMissing = 0;
-                            activePieces[m.pieceIdx].framesOccluded = 0;
-                            activePieces[m.pieceIdx].framesVisible++;
+                            updatePiecePosition(activePieces[m.pieceIdx], candidate.centroid, candidate.area);
 
-                            if (!activePieces[m.pieceIdx].isConfirmed && activePieces[m.pieceIdx].framesVisible > 10) {
+                            if (!activePieces[m.pieceIdx].isConfirmed && activePieces[m.pieceIdx].framesVisible >= framesToConfirmPiece) {
                                 activePieces[m.pieceIdx].isConfirmed = true;
                                 activePieces[m.pieceIdx].id = getAvailableId();
                             }
@@ -280,13 +395,12 @@ EXPORT_API void ProcessFrame() {
                     }
                 }
 
-                // Passagem 2
+                // Passagem 2: reacquisicao conservadora durante oclusao curta.
                 for (const auto& m : matches) {
                     if (!pieceMatched[m.pieceIdx] && !centroidMatched[m.centroidIdx]) {
-                        if (activePieces[m.pieceIdx].framesMissing > 0 && m.dist < 150.0) {
-                            activePieces[m.pieceIdx].position = currentCentroids[m.centroidIdx];
-                            activePieces[m.pieceIdx].framesMissing = 0;
-                            activePieces[m.pieceIdx].framesVisible++;
+                        const PieceCandidate& candidate = currentCandidates[m.centroidIdx];
+                        if (activePieces[m.pieceIdx].framesMissing > 0 && m.dist < reacquireMatchDistance && !candidate.nearHand) {
+                            updatePiecePosition(activePieces[m.pieceIdx], candidate.centroid, candidate.area);
                             pieceMatched[m.pieceIdx] = true;
                             centroidMatched[m.centroidIdx] = true;
                         }
@@ -301,7 +415,7 @@ EXPORT_API void ProcessFrame() {
 
                             if (maskHands.at<uchar>(activePieces[p].position.y, activePieces[p].position.x) == 255) {
                                 activePieces[p].framesOccluded++;
-                                if (activePieces[p].framesOccluded < 150) {
+                                if (activePieces[p].framesOccluded < maxOcclusionFrames) {
                                     if (activePieces[p].framesMissing > 5) activePieces[p].framesMissing = 5;
                                     circle(outputView, activePieces[p].position, 12, Scalar(200, 100, 255), 2);
                                 }
@@ -322,15 +436,22 @@ EXPORT_API void ProcessFrame() {
                 }
 
                 // Novos Fantasmas
-                for (size_t c = 0; c < currentCentroids.size(); c++) {
+                for (size_t c = 0; c < currentCandidates.size(); c++) {
                     if (!centroidMatched[c]) {
+                        if (currentCandidates[c].nearHand && currentCandidates[c].circularity < 0.62)
+                            continue;
+
                         TrackedPiece newPiece;
                         newPiece.id = -1;
-                        newPiece.position = currentCentroids[c];
+                        newPiece.position = currentCandidates[c].centroid;
+                        newPiece.filteredPosition = Point2f((float)newPiece.position.x, (float)newPiece.position.y);
+                        newPiece.velocity = Point2f(0, 0);
+                        newPiece.lastArea = currentCandidates[c].area;
                         newPiece.framesMissing = 0;
                         newPiece.framesVisible = 1;
                         newPiece.framesOccluded = 0;
                         newPiece.isConfirmed = false;
+                        newPiece.initialized = true;
                         activePieces.push_back(newPiece);
                     }
                 }
@@ -339,7 +460,7 @@ EXPORT_API void ProcessFrame() {
                 activePieces.erase(remove_if(activePieces.begin(), activePieces.end(),
                     [](const TrackedPiece& p) {
                         if (!p.isConfirmed && p.framesMissing > 0) return true;
-                        return p.framesMissing > 90;
+                        return p.framesMissing > maxMissingFrames;
                     }), activePieces.end());
 
                 // Atualiza a lista de exportação e desenha o HUD

@@ -58,6 +58,38 @@ public class KinectManager : MonoBehaviour
     [Header("Sistema de Recuperacao")]
     public float autoRebindDistance = 3.0f;
 
+    [Header("Estabilizacao do Rastreamento")]
+    [Tooltip("Diametro aproximado da peca fisica. Usado como referencia visual para ajustar os filtros.")]
+    [Range(1f, 10f)]
+    public float physicalPieceDiameterCm = 3.5f;
+
+    [Tooltip("Quantidade minima de frames consecutivos antes de aceitar um ID novo. Reduz blobs falsos da mao/braco.")]
+    [Range(1, 12)]
+    public int framesToConfirmNewPiece = 3;
+
+    [Tooltip("Frames que um token pode ficar sem deteccao antes de ser considerado perdido.")]
+    [Range(1, 30)]
+    public int framesBeforeLost = 8;
+
+    [Tooltip("Distancia maxima aceita em um unico frame. Saltos maiores sao tratados como ruido.")]
+    [Range(0.1f, 10f)]
+    public float maxWorldJumpPerFrame = 1.4f;
+
+    [Tooltip("Velocidade maxima aceita em unidades do mapa por segundo. Ajuda em movimentos rapidos sem aceitar teleporte falso.")]
+    [Range(1f, 80f)]
+    public float maxWorldSpeed = 28f;
+
+    [Tooltip("Mistura entre o ponto anterior e o novo ponto detectado. Valores menores suavizam mais.")]
+    [Range(0.05f, 1f)]
+    public float rawTrackingSmoothing = 0.45f;
+
+    [Tooltip("Deteccoes mais proximas que isto sao consideradas duplicadas do mesmo objeto.")]
+    [Range(0f, 3f)]
+    public float duplicateMergeDistance = 0.35f;
+
+    [Tooltip("Se ligado, novos IDs so reassumem tokens orfaos depois de alguns frames estaveis.")]
+    public bool requireStableIdForRebind = true;
+
     private Dictionary<int, TokenController> boundTokens = new Dictionary<int, TokenController>();
     private List<TokenController> orphanedTokens = new List<TokenController>();
     private TokenController pendingBindingToken = null;
@@ -73,6 +105,30 @@ public class KinectManager : MonoBehaviour
     private Vector3 lastMappedWorldPosition = Vector3.zero;
     private bool lastPointInsideProjection = false;
     private bool isCapturingCalibrationPoint = false;
+    private int lastStablePieceCount = 0;
+
+    private class PieceState
+    {
+        public Vector3 rawWorld;
+        public Vector3 filteredWorld;
+        public bool hasFiltered;
+        public int consecutiveSeen;
+        public int missingFrames;
+        public int lastSeenFrame;
+        public bool rejectedLastFrame;
+    }
+
+    private struct DetectionSample
+    {
+        public int id;
+        public int isLost;
+        public Vector2 kinectPixel;
+        public Vector2 normalized;
+        public Vector3 worldPosition;
+    }
+
+    private readonly Dictionary<int, PieceState> pieceStates = new Dictionary<int, PieceState>();
+    private readonly List<DetectionSample> frameDetections = new List<DetectionSample>(16);
 
     private void Awake()
     {
@@ -99,12 +155,12 @@ public class KinectManager : MonoBehaviour
     void Update()
     {
         if (Input.GetKeyDown(KeyCode.B)) StartCalibration();
-        if (Input.GetKeyDown(KeyCode.R)) { ResetTracker(); boundTokens.Clear(); orphanedTokens.Clear(); }
+        if (Input.GetKeyDown(KeyCode.R)) ResetTrackingState();
 
         if (Input.GetKeyDown(KeyCode.C))
         {
             ClearProjectionROISafe();
-            ResetTracker();
+            ResetTrackingState();
             currentCalibStep = CalibStep.TopLeft;
             UpdateCalibVisual();
             Debug.Log("CALIBRACAO: Coloque uma peca no ALVO VERMELHO.");
@@ -123,7 +179,9 @@ public class KinectManager : MonoBehaviour
             return;
 
         HashSet<int> idsThisFrame = new HashSet<int>();
+        HashSet<int> observedIds = new HashSet<int>();
         orphanedTokens.RemoveAll(t => t == null);
+        frameDetections.Clear();
 
         Bounds mapBounds = new Bounds(Vector3.zero, new Vector3(24f, 14f, 0f));
         if (LayerManager.Instance != null)
@@ -156,49 +214,91 @@ public class KinectManager : MonoBehaviour
             normalizedCoords.x = Mathf.Clamp01(normalizedCoords.x);
             normalizedCoords.y = Mathf.Clamp01(normalizedCoords.y);
 
-            idsThisFrame.Add(id);
-
             float worldX = Mathf.Lerp(mapBounds.min.x, mapBounds.max.x, normalizedCoords.x) + fineTuneX;
             float worldY = Mathf.Lerp(mapBounds.max.y, mapBounds.min.y, normalizedCoords.y) + fineTuneY;
             Vector3 worldPosition = new Vector3(worldX, worldY, 0f);
             lastMappedWorldPosition = worldPosition;
 
-            if (!boundTokens.ContainsKey(id))
+            if (isLost == 1)
+                continue;
+
+            DetectionSample sample = new DetectionSample
+            {
+                id = id,
+                isLost = isLost,
+                kinectPixel = currentKinectPixel,
+                normalized = normalizedCoords,
+                worldPosition = worldPosition
+            };
+
+            if (TryMergeDuplicateDetection(sample))
+                continue;
+
+            frameDetections.Add(sample);
+        }
+
+        foreach (DetectionSample detection in frameDetections)
+        {
+            observedIds.Add(detection.id);
+            PieceState state = GetOrCreatePieceState(detection.id);
+            bool accepted = UpdatePieceState(detection, state);
+            bool isConfirmed = state.consecutiveSeen >= framesToConfirmNewPiece;
+            bool alreadyBound = boundTokens.ContainsKey(detection.id);
+
+            if (!accepted && !alreadyBound)
+                continue;
+
+            if (!alreadyBound && requireStableIdForRebind && !isConfirmed)
+                continue;
+
+            idsThisFrame.Add(detection.id);
+
+            if (!boundTokens.ContainsKey(detection.id))
             {
                 TokenController bestOrphan = null;
                 float bestDist = autoRebindDistance;
 
                 foreach (TokenController orphan in orphanedTokens)
                 {
-                    float dist = Vector2.Distance(new Vector2(orphan.transform.position.x, orphan.transform.position.y), new Vector2(worldPosition.x, worldPosition.y));
+                    float dist = Vector2.Distance(new Vector2(orphan.transform.position.x, orphan.transform.position.y), new Vector2(state.filteredWorld.x, state.filteredWorld.y));
                     if (dist < bestDist) { bestDist = dist; bestOrphan = orphan; }
                 }
 
                 if (bestOrphan != null)
                 {
                     orphanedTokens.Remove(bestOrphan);
-                    boundTokens.Add(id, bestOrphan);
-                    bestOrphan.kinectTrackingId = id;
+                    boundTokens.Add(detection.id, bestOrphan);
+                    bestOrphan.kinectTrackingId = detection.id;
                     bestOrphan.SetLostState(false);
                 }
                 else if (pendingBindingToken != null)
                 {
-                    boundTokens.Add(id, pendingBindingToken);
-                    pendingBindingToken.kinectTrackingId = id;
+                    boundTokens.Add(detection.id, pendingBindingToken);
+                    pendingBindingToken.kinectTrackingId = detection.id;
                     pendingBindingToken.OnPlacedInMap();
                     pendingBindingToken = null;
                 }
             }
 
-            if (boundTokens.ContainsKey(id))
+            if (boundTokens.ContainsKey(detection.id))
             {
-                TokenController token = boundTokens[id];
+                TokenController token = boundTokens[detection.id];
                 if (token != null)
                 {
-                    token.UpdatePositionFromKinect(worldPosition);
-                    token.SetLostState(isLost == 1);
+                    token.UpdatePositionFromKinect(state.filteredWorld);
+                    token.SetLostState(false);
                 }
             }
+        }
+
+        foreach (var statePair in pieceStates)
+        {
+            if (observedIds.Contains(statePair.Key))
+                continue;
+
+            statePair.Value.missingFrames++;
+            if (statePair.Value.missingFrames > framesBeforeLost)
+                statePair.Value.consecutiveSeen = 0;
         }
 
         List<int> idsToRemove = new List<int>();
@@ -207,11 +307,127 @@ public class KinectManager : MonoBehaviour
             if (!idsThisFrame.Contains(kvp.Key))
             {
                 TokenController tk = kvp.Value;
-                if (tk != null) { tk.SetLostState(true); orphanedTokens.Add(tk); }
-                idsToRemove.Add(kvp.Key);
+                int missingFrames = pieceStates.TryGetValue(kvp.Key, out PieceState state) ? state.missingFrames : framesBeforeLost + 1;
+                if (missingFrames > framesBeforeLost)
+                {
+                    if (tk != null)
+                    {
+                        tk.SetLostState(true);
+                        if (!orphanedTokens.Contains(tk))
+                            orphanedTokens.Add(tk);
+                    }
+                    idsToRemove.Add(kvp.Key);
+                }
             }
         }
         foreach (int id in idsToRemove) boundTokens.Remove(id);
+        CleanupPieceStates();
+        lastStablePieceCount = idsThisFrame.Count;
+    }
+
+    private PieceState GetOrCreatePieceState(int id)
+    {
+        if (!pieceStates.TryGetValue(id, out PieceState state))
+        {
+            state = new PieceState();
+            pieceStates.Add(id, state);
+        }
+        return state;
+    }
+
+    private bool UpdatePieceState(DetectionSample detection, PieceState state)
+    {
+        state.rawWorld = detection.worldPosition;
+        state.missingFrames = 0;
+        state.lastSeenFrame = Time.frameCount;
+
+        if (!state.hasFiltered)
+        {
+            state.filteredWorld = detection.worldPosition;
+            state.hasFiltered = true;
+            state.consecutiveSeen = 1;
+            state.rejectedLastFrame = false;
+            return true;
+        }
+
+        float deltaTime = Mathf.Max(Time.deltaTime, 1f / 90f);
+        float allowedJump = Mathf.Max(maxWorldJumpPerFrame, maxWorldSpeed * deltaTime);
+        float jump = Vector2.Distance(state.filteredWorld, detection.worldPosition);
+
+        if (jump > allowedJump)
+        {
+            state.consecutiveSeen = Mathf.Max(0, state.consecutiveSeen - 1);
+            state.rejectedLastFrame = true;
+            return false;
+        }
+
+        float t = Mathf.Clamp01(rawTrackingSmoothing);
+        state.filteredWorld = Vector3.Lerp(state.filteredWorld, detection.worldPosition, t);
+        state.consecutiveSeen++;
+        state.rejectedLastFrame = false;
+        return true;
+    }
+
+    private bool TryMergeDuplicateDetection(DetectionSample sample)
+    {
+        if (duplicateMergeDistance <= 0f)
+            return false;
+
+        float duplicateDistanceSq = duplicateMergeDistance * duplicateMergeDistance;
+
+        for (int i = 0; i < frameDetections.Count; i++)
+        {
+            DetectionSample existing = frameDetections[i];
+            float distSq = (existing.worldPosition - sample.worldPosition).sqrMagnitude;
+
+            if (distSq > duplicateDistanceSq)
+                continue;
+
+            bool sampleAlreadyBound = boundTokens.ContainsKey(sample.id);
+            bool existingAlreadyBound = boundTokens.ContainsKey(existing.id);
+
+            if (sampleAlreadyBound && !existingAlreadyBound)
+                frameDetections[i] = sample;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private void CleanupPieceStates()
+    {
+        List<int> staleIds = null;
+
+        foreach (var kvp in pieceStates)
+        {
+            bool stillBound = boundTokens.ContainsKey(kvp.Key);
+            bool stale = kvp.Value.missingFrames > framesBeforeLost * 4;
+
+            if (!stillBound && stale)
+            {
+                if (staleIds == null)
+                    staleIds = new List<int>();
+                staleIds.Add(kvp.Key);
+            }
+        }
+
+        if (staleIds == null)
+            return;
+
+        foreach (int id in staleIds)
+            pieceStates.Remove(id);
+    }
+
+    private void ResetTrackingState()
+    {
+        ResetTracker();
+        boundTokens.Clear();
+        orphanedTokens.Clear();
+        pieceStates.Clear();
+        frameDetections.Clear();
+        pendingBindingToken = null;
+        lastStablePieceCount = 0;
     }
 
     private void UpdateCalibVisual()
@@ -518,12 +734,14 @@ public class KinectManager : MonoBehaviour
         {
             GUI.color = lastPointInsideProjection ? Color.green : Color.red;
             GUI.Box(
-                new Rect(20, Screen.height - 145, 460, 120),
+                new Rect(20, Screen.height - 170, 500, 145),
                 "KINECT DEBUG\n" +
                 $"Raw px: {lastRawKinectPixel.x:F0}, {lastRawKinectPixel.y:F0}\n" +
                 $"Proj 0..1: {lastProjectionNormalized.x:F3}, {lastProjectionNormalized.y:F3}\n" +
                 $"World: {lastMappedWorldPosition.x:F2}, {lastMappedWorldPosition.y:F2}\n" +
                 $"ROI: {(lastPointInsideProjection ? "DENTRO" : "FORA")}  margem={roiMargin:F2}\n" +
+                $"Estaveis: {lastStablePieceCount}  diametro peca={physicalPieceDiameterCm:F1}cm\n" +
+                $"Filtro: confirma={framesToConfirmNewPiece}  perdido={framesBeforeLost}  salto={maxWorldJumpPerFrame:F1}\n" +
                 $"Amostrando canto: {(isCapturingCalibrationPoint ? "SIM" : "NAO")}");
         }
     }
