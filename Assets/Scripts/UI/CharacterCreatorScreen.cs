@@ -5,6 +5,7 @@
 // ============================================================
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.EventSystems;
 using TMPro;
 using System.Collections.Generic;
 
@@ -12,6 +13,10 @@ public class CharacterCreatorScreen : MonoBehaviour
 {
     public static CharacterCreatorScreen Instance { get; private set; }
 
+    // Ordem controlada para nao cobrir dialogs/dados e nao ficar acima de tudo.
+    private const int SHEET_SORTING_ORDER = 16000;
+
+    private Canvas _sheetCanvas;
     private GameObject _mainScreen;
     private TMP_Text _headerTitle;
     private string _currentSystem;
@@ -19,11 +24,19 @@ public class CharacterCreatorScreen : MonoBehaviour
     private bool _avatarChanged = false;
     private Sprite _previewSprite = null;
     private bool _isNewAvatar = false;
-
-    // DICIONÁRIO MÁGICO: Guarda todos os campos criados para fácil leitura/escrita
+    private CharacterType _currentCharacterType = CharacterType.Player;
+    private CharacterState _currentState = CharacterState.Active;
+    private AvatarCropData _avatarCrop = new AvatarCropData();
+    private TMP_Text _typeBtnText;
+    private TMP_Text _stateBtnText;
+    private Slider _avatarZoomSlider;
+    private Slider _avatarOffsetXSlider;
+    private Slider _avatarOffsetYSlider;
+    private Sprite _croppedPreviewSprite = null;
+    // DICION�RIO M�GICO: Guarda todos os campos criados para f�cil leitura/escrita
     private Dictionary<string, TMP_InputField> _fieldMap = new Dictionary<string, TMP_InputField>();
 
-    // --- Áreas da Interface ---
+    // --- �reas da Interface ---
     private RectTransform formScrollContent;
     private GameObject dndContainer;
     private GameObject ordemContainer;
@@ -33,8 +46,10 @@ public class CharacterCreatorScreen : MonoBehaviour
     private float dndBaseHeight = 1000f;
     private float ordemBaseHeight = 1200f;
     private float magicSectionHeight = 450f;
+    private float _formScale = 1f;
+    private float _lastFormViewportWidth = -1f;
 
-    // Variáveis rápidas apenas para o painel principal (O resto usa o _fieldMap)
+    // Vari�veis r�pidas apenas para o painel principal (O resto usa o _fieldMap)
     private TMP_InputField dndName, dndRace, dndClass, dndLevel, dndHPCurr, dndHPMax, dndAC, dndSpd;
     private TMP_InputField ordemName, ordemClass, ordemTrilha, ordemNEX, ordemPVCurr, ordemPVMax, ordemPECurr, ordemPEMax, ordemSANCurr, ordemSANMax, ordemDefesa;
 
@@ -46,6 +61,21 @@ public class CharacterCreatorScreen : MonoBehaviour
 
     private Texture2D currentAvatarTex = null;
     private Image avatarPreview;
+    private Button _avatarButton;
+    private Button _typeButton;
+    private Button _stateButton;
+    private Button _resetCropButton;
+    private Button _saveButton;
+    private TMP_Text _saveButtonText;
+    private TMP_Text _cancelButtonText;
+    private bool _sessionOnlyMode = false;
+    private bool _returnToDashboardOnClose = false;
+
+    private static readonly HashSet<string> SessionEditableKeys = new HashSet<string>
+    {
+        "dnd_hp_curr", "dnd_hp_max", "dnd_insp", "dnd_traits", "dnd_equip", "dnd_magic_slots", "dnd_magic_list",
+        "ord_pv_curr", "ord_pv_max", "ord_pe_curr", "ord_pe_max", "ord_san_curr", "ord_san_max", "ord_powers", "ord_inv", "ord_rit_list"
+    };
 
     private void Awake()
     {
@@ -54,14 +84,37 @@ public class CharacterCreatorScreen : MonoBehaviour
         _mainScreen.SetActive(false);
     }
 
+
+    private void Update()
+    {
+        if (_mainScreen == null || !_mainScreen.activeSelf || formScrollContent == null) return;
+        RectTransform viewport = formScrollContent.parent as RectTransform;
+        float width = viewport != null ? viewport.rect.width : 0f;
+        if (Mathf.Abs(width - _lastFormViewportWidth) > 8f)
+        {
+            FitFormToViewport();
+            UpdateScrollHeight();
+        }
+    }
+
+    private void FitFormToViewport()
+    {
+        if (formScrollContent == null) return;
+        RectTransform viewport = formScrollContent.parent as RectTransform;
+        float width = viewport != null && viewport.rect.width > 0f ? viewport.rect.width : Screen.width;
+        _lastFormViewportWidth = width;
+        _formScale = Mathf.Clamp((width - 36f) / 1000f, 0.72f, 1f);
+
+        if (dndContainer != null) dndContainer.transform.localScale = Vector3.one * _formScale;
+        if (ordemContainer != null) ordemContainer.transform.localScale = Vector3.one * _formScale;
+    }
     private void BuildFullScreenUI()
     {
-        Canvas cv = FindAnyObjectByType<Canvas>();
-        if (cv == null) return;
-
-        _mainScreen = VTTLayout.New("CharacterCreatorScreen", cv.transform);
+        _sheetCanvas = VTTLayout.GetOverlayCanvas("VTT_CharacterSheetCanvas", SHEET_SORTING_ORDER);
+        _mainScreen = VTTLayout.New("CharacterCreatorScreen", _sheetCanvas.transform);
         RectTransform screenRT = _mainScreen.AddComponent<RectTransform>();
         screenRT.anchorMin = Vector2.zero; screenRT.anchorMax = Vector2.one;
+        screenRT.offsetMin = Vector2.zero; screenRT.offsetMax = Vector2.zero;
         screenRT.sizeDelta = Vector2.zero;
         Image bgImg = _mainScreen.AddComponent<Image>();
         bgImg.color = VTTLayout.C_BG;
@@ -93,6 +146,18 @@ public class CharacterCreatorScreen : MonoBehaviour
         leftRT.anchorMin = new Vector2(0, 0); leftRT.anchorMax = new Vector2(0, 1);
         leftRT.offsetMin = new Vector2(0, 0); leftRT.offsetMax = new Vector2(leftWidth, 0);
 
+        RectTransform leftContentRT;
+        ScrollRect leftScroll = VTTLayout.MakeScrollView("CharacterSideScroll", leftRT, 0, 0, leftWidth, 0, out leftContentRT);
+        RectTransform leftScrollRT = leftScroll.GetComponent<RectTransform>();
+        leftScrollRT.anchorMin = new Vector2(0, 0); leftScrollRT.anchorMax = new Vector2(1, 1);
+        leftScrollRT.offsetMin = new Vector2(0f, 145f);
+        leftScrollRT.offsetMax = Vector2.zero;
+        leftScroll.movementType = ScrollRect.MovementType.Clamped;
+        leftContentRT.anchorMin = new Vector2(0, 1);
+        leftContentRT.anchorMax = new Vector2(1, 1);
+        leftContentRT.pivot = new Vector2(0.5f, 1f);
+        leftContentRT.sizeDelta = new Vector2(0f, 780f);
+
         GameObject div = VTTLayout.New("Div", centerRT);
         RectTransform divRT = div.AddComponent<RectTransform>();
         divRT.anchorMin = new Vector2(0, 0); divRT.anchorMax = new Vector2(0, 1);
@@ -100,51 +165,59 @@ public class CharacterCreatorScreen : MonoBehaviour
         divRT.offsetMin = new Vector2(leftWidth, 0); divRT.offsetMax = new Vector2(leftWidth + 2f, 0);
         VTTLayout.Deco(div, VTTLayout.C_BDR_DEFAULT);
 
-        avatarPreview = VTTLayout.MakeMaskedAvatar(leftRT, Vector2.zero, new Vector2(180f, 180f), VTTLayout.C_CONTENT_BG);
+        avatarPreview = VTTLayout.MakeMaskedAvatar(leftContentRT, Vector2.zero, new Vector2(160f, 160f), VTTLayout.C_CONTENT_BG);
         RectTransform maskRT = avatarPreview.transform.parent.GetComponent<RectTransform>();
         maskRT.anchorMin = new Vector2(0.5f, 1f); maskRT.anchorMax = new Vector2(0.5f, 1f);
         maskRT.pivot = new Vector2(0.5f, 1f);
-        maskRT.sizeDelta = new Vector2(180f, 180f);
-        maskRT.anchoredPosition = new Vector2(0f, -40f);
+        maskRT.sizeDelta = new Vector2(160f, 160f);
+        maskRT.anchoredPosition = new Vector2(0f, -24f);
 
-        Button btnAvatar = VTTLayout.BtnFixed(leftRT, 0, 0, 180f, 36f, "ESCOLHER IMAGEM", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, 12f, true);
+        Button btnAvatar = VTTLayout.BtnFixed(leftContentRT, 0, 0, 180f, 34f, "ESCOLHER IMAGEM", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, 12f, true);
         RectTransform baRT = btnAvatar.transform.parent.GetComponent<RectTransform>();
         baRT.anchorMin = new Vector2(0.5f, 1f); baRT.anchorMax = new Vector2(0.5f, 1f);
         baRT.pivot = new Vector2(0.5f, 1f);
         baRT.sizeDelta = new Vector2(180f, 36f);
-        baRT.anchoredPosition = new Vector2(0f, -240f);
+        baRT.anchoredPosition = new Vector2(0f, -196f);
+        _avatarButton = btnAvatar;
         btnAvatar.onClick.AddListener(DoPickAvatar);
 
-        leftBarsDnD = VTTLayout.New("Bars_DnD", leftRT);
+        BuildAvatarCustomizationControls(leftContentRT);
+
+        leftBarsDnD = VTTLayout.New("Bars_DnD", leftContentRT);
         RectTransform lbDndRT = leftBarsDnD.AddComponent<RectTransform>();
         lbDndRT.anchorMin = new Vector2(0, 1); lbDndRT.anchorMax = new Vector2(1, 1);
         lbDndRT.pivot = new Vector2(0.5f, 1f);
         lbDndRT.anchoredPosition = Vector2.zero;
 
-        CreateVisualBar(lbDndRT, -320f, "HP", "dnd_hp", new Color(0.85f, 0.2f, 0.3f), out dndHPCurr, out dndHPMax, "10");
+        VTTLayout.LabelFixed(lbDndRT, 20f, -500f, 240f, 20f, 10.5f, VTTLayout.C_TEXT_DIM, FontStyles.Bold, TextAlignmentOptions.MidlineLeft).text = "STATUS PRINCIPAL";
+        CreateVisualBar(lbDndRT, -535f, "HP", "dnd_hp", new Color(0.85f, 0.2f, 0.3f), out dndHPCurr, out dndHPMax, "10");
 
-        leftBarsOrdem = VTTLayout.New("Bars_Ordem", leftRT);
+        leftBarsOrdem = VTTLayout.New("Bars_Ordem", leftContentRT);
         RectTransform lbOrdemRT = leftBarsOrdem.AddComponent<RectTransform>();
         lbOrdemRT.anchorMin = new Vector2(0, 1); lbOrdemRT.anchorMax = new Vector2(1, 1);
         lbOrdemRT.pivot = new Vector2(0.5f, 1f);
         lbOrdemRT.anchoredPosition = Vector2.zero;
 
-        CreateVisualBar(lbOrdemRT, -320f, "PV", "ord_pv", new Color(0.85f, 0.2f, 0.3f), out ordemPVCurr, out ordemPVMax, "20");
-        CreateVisualBar(lbOrdemRT, -380f, "PE", "ord_pe", new Color(0.2f, 0.5f, 0.85f), out ordemPECurr, out ordemPEMax, "15");
-        CreateVisualBar(lbOrdemRT, -440f, "SAN", "ord_san", new Color(0.6f, 0.2f, 0.85f), out ordemSANCurr, out ordemSANMax, "25");
+        VTTLayout.LabelFixed(lbOrdemRT, 20f, -500f, 240f, 20f, 10.5f, VTTLayout.C_TEXT_DIM, FontStyles.Bold, TextAlignmentOptions.MidlineLeft).text = "STATUS PRINCIPAL";
+        CreateVisualBar(lbOrdemRT, -535f, "PV", "ord_pv", new Color(0.85f, 0.2f, 0.3f), out ordemPVCurr, out ordemPVMax, "20");
+        CreateVisualBar(lbOrdemRT, -595f, "PE", "ord_pe", new Color(0.2f, 0.5f, 0.85f), out ordemPECurr, out ordemPEMax, "15");
+        CreateVisualBar(lbOrdemRT, -655f, "SAN", "ord_san", new Color(0.6f, 0.2f, 0.85f), out ordemSANCurr, out ordemSANMax, "25");
 
         Button btnSave = VTTLayout.BtnFixed(leftRT, 0, 0, 240f, 50f, "SALVAR FICHA", VTTLayout.C_BTN_PRI, VTTLayout.C_BDR_ACC, VTTLayout.C_TEXT, 14f, true);
+        _saveButton = btnSave;
+        _saveButtonText = btnSave.GetComponentInChildren<TMP_Text>();
         RectTransform bsRT = btnSave.transform.parent.GetComponent<RectTransform>();
         bsRT.anchorMin = new Vector2(0.5f, 0f); bsRT.anchorMax = new Vector2(0.5f, 0f);
         bsRT.pivot = new Vector2(0.5f, 0f);
         bsRT.anchoredPosition = new Vector2(0f, 30f);
-        btnSave.onClick.AddListener(DoSave);
+        _saveButton.onClick.AddListener(DoSave);
 
         Button btnCancel = VTTLayout.BtnFixed(leftRT, 0, 0, 240f, 40f, "CANCELAR", VTTLayout.C_BTN_CLOSE, VTTLayout.C_BDR_CLOSE, VTTLayout.C_TEXT, 12f, true);
         RectTransform bcRT = btnCancel.transform.parent.GetComponent<RectTransform>();
         bcRT.anchorMin = new Vector2(0.5f, 0f); bcRT.anchorMax = new Vector2(0.5f, 0f);
         bcRT.pivot = new Vector2(0.5f, 0f);
         bcRT.anchoredPosition = new Vector2(0f, 90f);
+        _cancelButtonText = btnCancel.GetComponentInChildren<TMP_Text>();
         btnCancel.onClick.AddListener(ClosePanel);
 
         GameObject rightPanel = VTTLayout.New("RightPanel", centerRT);
@@ -164,7 +237,125 @@ public class CharacterCreatorScreen : MonoBehaviour
         BuildOrdemForm();
     }
 
-    // --- FUNÇÕES DE REGISTO ---
+
+    private void BuildAvatarCustomizationControls(RectTransform leftRT)
+    {
+        Button typeBtn = VTTLayout.BtnFixed(leftRT, 20f, -248f, 115f, 32f, "TIPO", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, 10f, true);
+        _typeButton = typeBtn;
+        _typeBtnText = typeBtn.GetComponentInChildren<TMP_Text>();
+        typeBtn.onClick.AddListener(CycleCharacterType);
+
+        Button stateBtn = VTTLayout.BtnFixed(leftRT, 145f, -248f, 115f, 32f, "ESTADO", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, 10f, true);
+        _stateButton = stateBtn;
+        _stateBtnText = stateBtn.GetComponentInChildren<TMP_Text>();
+        stateBtn.onClick.AddListener(CycleCharacterState);
+
+        VTTLayout.LabelFixed(leftRT, 40f, -296f, 200f, 18f, 10f, VTTLayout.C_TEXT_DIM, FontStyles.Bold, TextAlignmentOptions.MidlineLeft).text = "ZOOM DO RETRATO";
+        _avatarZoomSlider = VTTLayout.SliderFixed(leftRT, 40f, -318f, 200f, 18f, 0.75f, 3.5f, 1f);
+        _avatarZoomSlider.onValueChanged.AddListener((value) => {
+            _avatarCrop.zoom = value;
+            UpdateAvatarPreview();
+        });
+
+        VTTLayout.LabelFixed(leftRT, 40f, -348f, 200f, 18f, 10f, VTTLayout.C_TEXT_DIM, FontStyles.Bold, TextAlignmentOptions.MidlineLeft).text = "POSICAO HORIZONTAL";
+        _avatarOffsetXSlider = VTTLayout.SliderFixed(leftRT, 40f, -370f, 200f, 18f, -1f, 1f, 0f);
+        _avatarOffsetXSlider.onValueChanged.AddListener((value) => {
+            _avatarCrop.offsetX = value;
+            UpdateAvatarPreview();
+        });
+
+        VTTLayout.LabelFixed(leftRT, 40f, -400f, 200f, 18f, 10f, VTTLayout.C_TEXT_DIM, FontStyles.Bold, TextAlignmentOptions.MidlineLeft).text = "POSICAO VERTICAL";
+        _avatarOffsetYSlider = VTTLayout.SliderFixed(leftRT, 40f, -422f, 200f, 18f, -1f, 1f, 0f);
+        _avatarOffsetYSlider.onValueChanged.AddListener((value) => {
+            _avatarCrop.offsetY = value;
+            UpdateAvatarPreview();
+        });
+
+        Button resetBtn = VTTLayout.BtnFixed(leftRT, 40f, -456f, 200f, 28f, "RESETAR ENQUADRAMENTO", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT_DIM, 9.5f, false);
+        resetBtn.onClick.AddListener(ResetAvatarCrop);
+
+        GameObject previewHitArea = avatarPreview.transform.parent.gameObject;
+        EventTrigger trigger = previewHitArea.GetComponent<EventTrigger>();
+        if (trigger == null) trigger = previewHitArea.AddComponent<EventTrigger>();
+
+        EventTrigger.Entry dragEntry = new EventTrigger.Entry { eventID = EventTriggerType.Drag };
+        dragEntry.callback.AddListener((data) => {
+            PointerEventData pointer = data as PointerEventData;
+            if (pointer == null || currentAvatarTex == null) return;
+
+            _avatarCrop.offsetX = Mathf.Clamp(_avatarCrop.offsetX + pointer.delta.x / 120f, -1f, 1f);
+            _avatarCrop.offsetY = Mathf.Clamp(_avatarCrop.offsetY + pointer.delta.y / 120f, -1f, 1f);
+            SyncAvatarCropSliders();
+            UpdateAvatarPreview();
+        });
+        trigger.triggers.Add(dragEntry);
+
+        UpdateEntityButtons();
+        SyncAvatarCropSliders();
+    }
+
+    private void CycleCharacterType()
+    {
+        _currentCharacterType = _currentCharacterType == CharacterType.Player ? CharacterType.NPC : (_currentCharacterType == CharacterType.NPC ? CharacterType.Enemy : CharacterType.Player);
+        UpdateEntityButtons();
+    }
+
+    private void CycleCharacterState()
+    {
+        _currentState = _currentState == CharacterState.Active ? CharacterState.Dead : (_currentState == CharacterState.Dead ? CharacterState.Hidden : CharacterState.Active);
+        UpdateEntityButtons();
+    }
+
+    private void UpdateEntityButtons()
+    {
+        if (_typeBtnText != null) _typeBtnText.text = "TIPO: " + CharacterManager.GetCharacterTypeLabel(_currentCharacterType).ToUpper();
+        if (_stateBtnText != null) _stateBtnText.text = "ESTADO: " + CharacterManager.GetCharacterStateLabel(_currentState).ToUpper();
+    }
+
+    private void ResetAvatarCrop()
+    {
+        _avatarCrop = new AvatarCropData();
+        SyncAvatarCropSliders();
+        UpdateAvatarPreview();
+    }
+
+    private void SyncAvatarCropSliders()
+    {
+        if (_avatarCrop == null) _avatarCrop = new AvatarCropData();
+        if (_avatarZoomSlider != null) _avatarZoomSlider.SetValueWithoutNotify(_avatarCrop.zoom);
+        if (_avatarOffsetXSlider != null) _avatarOffsetXSlider.SetValueWithoutNotify(_avatarCrop.offsetX);
+        if (_avatarOffsetYSlider != null) _avatarOffsetYSlider.SetValueWithoutNotify(_avatarCrop.offsetY);
+    }
+
+    private AvatarCropData CloneAvatarCrop()
+    {
+        if (_avatarCrop == null) _avatarCrop = new AvatarCropData();
+        return new AvatarCropData { zoom = _avatarCrop.zoom, offsetX = _avatarCrop.offsetX, offsetY = _avatarCrop.offsetY };
+    }
+
+    private void DestroyPreviewSprites()
+    {
+        if (_previewSprite != null) { Destroy(_previewSprite); _previewSprite = null; }
+        if (_croppedPreviewSprite != null) { Destroy(_croppedPreviewSprite); _croppedPreviewSprite = null; }
+    }
+
+    private void UpdateAvatarPreview()
+    {
+        if (avatarPreview == null) return;
+        if (_croppedPreviewSprite != null) { Destroy(_croppedPreviewSprite); _croppedPreviewSprite = null; }
+
+        if (currentAvatarTex == null)
+        {
+            avatarPreview.sprite = null;
+            avatarPreview.color = Color.clear;
+            return;
+        }
+
+        _croppedPreviewSprite = VTTLayout.CreateCroppedAvatarSprite(currentAvatarTex, _avatarCrop, 100f, 256, true);
+        avatarPreview.sprite = _croppedPreviewSprite;
+        avatarPreview.color = Color.white;
+    }
+    // --- FUN��ES DE REGISTO ---
     private TMP_InputField Reg(string key, TMP_InputField input)
     {
         _fieldMap[key] = input;
@@ -239,22 +430,22 @@ public class CharacterCreatorScreen : MonoBehaviour
         dndName = Reg("dnd_name", VTTLayout.InputFieldFixed(dndRT, x, y - 25f, 960f, 40f, 16f, VTTLayout.C_TEXT_PANEL, FontStyles.Bold, ""));
         y -= 80f;
 
-        dndRace = CreateField(dndRT, x, y, 310f, "RAÇA", "dnd_race");
+        dndRace = CreateField(dndRT, x, y, 310f, "RA�A", "dnd_race");
         dndClass = CreateField(dndRT, x + 325f, y, 310f, "CLASSE", "dnd_class");
-        dndLevel = CreateField(dndRT, x + 650f, y, 310f, "NÍVEL", "dnd_level");
+        dndLevel = CreateField(dndRT, x + 650f, y, 310f, "N�VEL", "dnd_level");
         y -= 80f;
 
         CreateField(dndRT, x, y, 472.5f, "ANTECEDENTE", "dnd_bkg");
-        CreateField(dndRT, x + 487.5f, y, 472.5f, "TENDÊNCIA", "dnd_align");
+        CreateField(dndRT, x + 487.5f, y, 472.5f, "TEND�NCIA", "dnd_align");
         y -= 90f;
 
         VTTLayout.LabelFixed(dndRT, x, y, 960f, 20f, 14f, cDnd, FontStyles.Bold, TextAlignmentOptions.BottomLeft).text = "ATRIBUTOS PRINCIPAIS";
         y -= 25f;
         float aw = 145f; float ag = 18f;
-        CreateField(dndRT, x + (aw + ag) * 0, y, aw, "FORÇA", "dnd_str");
+        CreateField(dndRT, x + (aw + ag) * 0, y, aw, "FOR�A", "dnd_str");
         CreateField(dndRT, x + (aw + ag) * 1, y, aw, "DESTREZA", "dnd_dex");
-        CreateField(dndRT, x + (aw + ag) * 2, y, aw, "CONSTITUIÇÃO", "dnd_con");
-        CreateField(dndRT, x + (aw + ag) * 3, y, aw, "INTELIGÊNCIA", "dnd_int");
+        CreateField(dndRT, x + (aw + ag) * 2, y, aw, "CONSTITUI��O", "dnd_con");
+        CreateField(dndRT, x + (aw + ag) * 3, y, aw, "INTELIG�NCIA", "dnd_int");
         CreateField(dndRT, x + (aw + ag) * 4, y, aw, "SABEDORIA", "dnd_wis");
         CreateField(dndRT, x + (aw + ag) * 5, y, aw, "CARISMA", "dnd_cha");
         y -= 85f;
@@ -265,13 +456,13 @@ public class CharacterCreatorScreen : MonoBehaviour
         dndAC = CreateField(dndRT, x + (cbW + cbGap) * 0, y, cbW, "CLASSE ARMADURA (CA)", "dnd_ac");
         dndSpd = CreateField(dndRT, x + (cbW + cbGap) * 1, y, cbW, "DESLOCAMENTO", "dnd_spd");
         CreateField(dndRT, x + (cbW + cbGap) * 2, y, cbW, "INICIATIVA", "dnd_init");
-        CreateField(dndRT, x + (cbW + cbGap) * 3, y, cbW, "BÔNUS PROFICIÊNCIA", "dnd_prof");
-        CreateField(dndRT, x + (cbW + cbGap) * 4, y, cbW, "INSPIRAÇÃO", "dnd_insp");
+        CreateField(dndRT, x + (cbW + cbGap) * 3, y, cbW, "B�NUS PROFICI�NCIA", "dnd_prof");
+        CreateField(dndRT, x + (cbW + cbGap) * 4, y, cbW, "INSPIRA��O", "dnd_insp");
         y -= 90f;
 
-        VTTLayout.LabelFixed(dndRT, x, y, 960f, 20f, 14f, cDnd, FontStyles.Bold, TextAlignmentOptions.BottomLeft).text = "PERÍCIAS";
+        VTTLayout.LabelFixed(dndRT, x, y, 960f, 20f, 14f, cDnd, FontStyles.Bold, TextAlignmentOptions.BottomLeft).text = "PER�CIAS";
         y -= 25f;
-        string[] dndSkills = { "Acrobacia", "Arcanismo", "Atletismo", "Atuação", "Enganação", "Furtividade", "História", "Intimidação", "Intuição", "Investigação", "Lidar Animais", "Medicina", "Natureza", "Percepção", "Persuasão", "Prestidigitação", "Religião", "Sobrevivência" };
+        string[] dndSkills = { "Acrobacia", "Arcanismo", "Atletismo", "Atua��o", "Engana��o", "Furtividade", "Hist�ria", "Intimida��o", "Intui��o", "Investiga��o", "Lidar Animais", "Medicina", "Natureza", "Percep��o", "Persuas�o", "Prestidigita��o", "Religi�o", "Sobreviv�ncia" };
         int rows = Mathf.CeilToInt(dndSkills.Length / 3f);
         for (int i = 0; i < dndSkills.Length; i++)
         {
@@ -279,14 +470,14 @@ public class CharacterCreatorScreen : MonoBehaviour
         }
         y -= (rows * 40f) + 30f;
 
-        VTTLayout.LabelFixed(dndRT, x, y, 472.5f, 20f, 14f, cDnd, FontStyles.Bold, TextAlignmentOptions.BottomLeft).text = "TRAÇOS E CARACTERÍSTICAS";
+        VTTLayout.LabelFixed(dndRT, x, y, 472.5f, 20f, 14f, cDnd, FontStyles.Bold, TextAlignmentOptions.BottomLeft).text = "TRA�OS E CARACTER�STICAS";
         VTTLayout.LabelFixed(dndRT, x + 487.5f, y, 472.5f, 20f, 14f, cDnd, FontStyles.Bold, TextAlignmentOptions.BottomLeft).text = "EQUIPAMENTO E TESOURO";
         y -= 25f;
         Reg("dnd_traits", VTTLayout.InputFieldMultiline(dndRT, x, y, 472.5f, 180f, 14f, VTTLayout.C_TEXT, FontStyles.Normal, ""));
         Reg("dnd_equip", VTTLayout.InputFieldMultiline(dndRT, x + 487.5f, y, 472.5f, 180f, 14f, VTTLayout.C_TEXT, FontStyles.Normal, ""));
         y -= 210f;
 
-        Button btnSpells = VTTLayout.BtnFixed(dndRT, x, y, 960f, 40f, "MAGIAS E ESPAÇOS DE MAGIA ▼", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, cDnd, 14f, true);
+        Button btnSpells = VTTLayout.BtnFixed(dndRT, x, y, 960f, 40f, "MAGIAS E ESPA�OS DE MAGIA ?", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, cDnd, 14f, true);
         btnSpells.onClick.AddListener(ToggleDnDSpells);
         y -= 60f;
 
@@ -307,10 +498,10 @@ public class CharacterCreatorScreen : MonoBehaviour
         sy -= 35f;
         CreateField(spRT, x + 15f, sy, 305f, "ATRIBUTO CHAVE", "dnd_magic_attr");
         CreateField(spRT, x + 330f, sy, 305f, "CD DA MAGIA", "dnd_magic_dc");
-        CreateField(spRT, x + 645f, sy, 300f, "BÔNUS DE ATAQUE", "dnd_magic_atk");
+        CreateField(spRT, x + 645f, sy, 300f, "B�NUS DE ATAQUE", "dnd_magic_atk");
         sy -= 80f;
 
-        VTTLayout.LabelFixed(spRT, x + 15f, sy, 465f, 20f, 14f, cDnd, FontStyles.Bold, TextAlignmentOptions.BottomLeft).text = "ESPAÇOS DE MAGIA (SLOTS)";
+        VTTLayout.LabelFixed(spRT, x + 15f, sy, 465f, 20f, 14f, cDnd, FontStyles.Bold, TextAlignmentOptions.BottomLeft).text = "ESPA�OS DE MAGIA (SLOTS)";
         VTTLayout.LabelFixed(spRT, x + 490f, sy, 465f, 20f, 14f, cDnd, FontStyles.Bold, TextAlignmentOptions.BottomLeft).text = "TRUQUES E MAGIAS CONHECIDAS";
         sy -= 25f;
         Reg("dnd_magic_slots", VTTLayout.InputFieldMultiline(spRT, x + 15f, sy, 460f, 250f, 14f, VTTLayout.C_TEXT, FontStyles.Normal, ""));
@@ -350,8 +541,8 @@ public class CharacterCreatorScreen : MonoBehaviour
         CreateField(ordemRT, x + (aw + ag) * 0, y, aw, "AGILIDADE", "ord_agi");
         CreateField(ordemRT, x + (aw + ag) * 1, y, aw, "INTELECTO", "ord_int");
         CreateField(ordemRT, x + (aw + ag) * 2, y, aw, "VIGOR", "ord_vig");
-        CreateField(ordemRT, x + (aw + ag) * 3, y, aw, "PRESENÇA", "ord_pre");
-        CreateField(ordemRT, x + (aw + ag) * 4, y, aw, "FORÇA", "ord_for");
+        CreateField(ordemRT, x + (aw + ag) * 3, y, aw, "PRESEN�A", "ord_pre");
+        CreateField(ordemRT, x + (aw + ag) * 4, y, aw, "FOR�A", "ord_for");
         y -= 85f;
 
         VTTLayout.LabelFixed(ordemRT, x, y, 960f, 20f, 14f, cOrdem, FontStyles.Bold, TextAlignmentOptions.BottomLeft).text = "DEFESAS";
@@ -362,9 +553,9 @@ public class CharacterCreatorScreen : MonoBehaviour
         CreateField(ordemRT, x + (cw + cg) * 2, y, cw, "BLOQUEIO", "ord_bloq");
         y -= 90f;
 
-        VTTLayout.LabelFixed(ordemRT, x, y, 960f, 20f, 14f, cOrdem, FontStyles.Bold, TextAlignmentOptions.BottomLeft).text = "PERÍCIAS";
+        VTTLayout.LabelFixed(ordemRT, x, y, 960f, 20f, 14f, cOrdem, FontStyles.Bold, TextAlignmentOptions.BottomLeft).text = "PER�CIAS";
         y -= 25f;
-        string[] ordemSkillsList = { "Acrobacia", "Adestramento", "Artes", "Atletismo", "Atualidades", "Ciências", "Crime", "Diplomacia", "Enganação", "Fortitude", "Furtividade", "Iniciativa", "Intimidação", "Intuição", "Investigação", "Luta", "Medicina", "Ocultismo", "Percepção", "Pilotagem", "Pontaria", "Profissão", "Reflexos", "Religião", "Sobrevivência", "Tática", "Tecnologia", "Vontade" };
+        string[] ordemSkillsList = { "Acrobacia", "Adestramento", "Artes", "Atletismo", "Atualidades", "Ci�ncias", "Crime", "Diplomacia", "Engana��o", "Fortitude", "Furtividade", "Iniciativa", "Intimida��o", "Intui��o", "Investiga��o", "Luta", "Medicina", "Ocultismo", "Percep��o", "Pilotagem", "Pontaria", "Profiss�o", "Reflexos", "Religi�o", "Sobreviv�ncia", "T�tica", "Tecnologia", "Vontade" };
         int rRows = Mathf.CeilToInt(ordemSkillsList.Length / 3f);
         for (int i = 0; i < ordemSkillsList.Length; i++)
         {
@@ -373,13 +564,13 @@ public class CharacterCreatorScreen : MonoBehaviour
         y -= (rRows * 40f) + 30f;
 
         VTTLayout.LabelFixed(ordemRT, x, y, 472.5f, 20f, 14f, cOrdem, FontStyles.Bold, TextAlignmentOptions.BottomLeft).text = "HABILIDADES E PODERES";
-        VTTLayout.LabelFixed(ordemRT, x + 487.5f, y, 472.5f, 20f, 14f, cOrdem, FontStyles.Bold, TextAlignmentOptions.BottomLeft).text = "INVENTÁRIO (Peso/Espaços)";
+        VTTLayout.LabelFixed(ordemRT, x + 487.5f, y, 472.5f, 20f, 14f, cOrdem, FontStyles.Bold, TextAlignmentOptions.BottomLeft).text = "INVENT�RIO (Peso/Espa�os)";
         y -= 25f;
         Reg("ord_powers", VTTLayout.InputFieldMultiline(ordemRT, x, y, 472.5f, 200f, 14f, VTTLayout.C_TEXT, FontStyles.Normal, ""));
         Reg("ord_inv", VTTLayout.InputFieldMultiline(ordemRT, x + 487.5f, y, 472.5f, 200f, 14f, VTTLayout.C_TEXT, FontStyles.Normal, ""));
         y -= 230f;
 
-        Button btnRituais = VTTLayout.BtnFixed(ordemRT, x, y, 960f, 40f, "RITUAIS PARANORMAIS ▼", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, cOrdem, 14f, true);
+        Button btnRituais = VTTLayout.BtnFixed(ordemRT, x, y, 960f, 40f, "RITUAIS PARANORMAIS ?", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, cOrdem, 14f, true);
         btnRituais.onClick.AddListener(ToggleOrdemRituais);
         y -= 60f;
 
@@ -415,32 +606,74 @@ public class CharacterCreatorScreen : MonoBehaviour
 
     private void UpdateScrollHeight()
     {
-        if (_currentSystem == "D&D 5e") formScrollContent.sizeDelta = new Vector2(0, dndBaseHeight + (dndSpellsOpen ? magicSectionHeight : 0));
-        else formScrollContent.sizeDelta = new Vector2(0, ordemBaseHeight + (ordemRituaisOpen ? magicSectionHeight : 0));
+        FitFormToViewport();
+        float baseHeight = _currentSystem == "D&D 5e" ? dndBaseHeight : ordemBaseHeight;
+        bool magicOpen = _currentSystem == "D&D 5e" ? dndSpellsOpen : ordemRituaisOpen;
+        formScrollContent.sizeDelta = new Vector2(0, (baseHeight + (magicOpen ? magicSectionHeight : 0)) * _formScale + 40f);
     }
 
+
+    private bool IsSessionEditableKey(string key)
+    {
+        return !string.IsNullOrEmpty(key) && SessionEditableKeys.Contains(key);
+    }
+
+    private void ApplySheetInteractionMode(bool sessionOnly)
+    {
+        _sessionOnlyMode = sessionOnly;
+
+        foreach (var kvp in _fieldMap)
+        {
+            TMP_InputField input = kvp.Value;
+            if (input == null) continue;
+
+            bool canEdit = !sessionOnly || IsSessionEditableKey(kvp.Key);
+            input.interactable = true;
+            input.readOnly = !canEdit;
+            if (input.textComponent != null)
+                input.textComponent.color = canEdit ? VTTLayout.C_TEXT_PANEL : VTTLayout.C_TEXT;
+            if (input.targetGraphic != null)
+                input.targetGraphic.color = canEdit ? Color.white : new Color(1f, 1f, 1f, 0.72f);
+        }
+
+        if (_avatarButton != null) _avatarButton.interactable = !sessionOnly;
+        if (_typeButton != null) _typeButton.interactable = !sessionOnly;
+        if (_stateButton != null) _stateButton.interactable = !sessionOnly;
+        if (_resetCropButton != null) _resetCropButton.interactable = !sessionOnly;
+        if (_avatarZoomSlider != null) _avatarZoomSlider.interactable = !sessionOnly;
+        if (_avatarOffsetXSlider != null) _avatarOffsetXSlider.interactable = !sessionOnly;
+        if (_avatarOffsetYSlider != null) _avatarOffsetYSlider.interactable = !sessionOnly;
+
+        if (_saveButtonText != null) _saveButtonText.text = sessionOnly ? "SALVAR SESSAO" : "SALVAR FICHA";
+        if (_cancelButtonText != null) _cancelButtonText.text = sessionOnly ? "FECHAR" : "CANCELAR";
+    }
     private void DoPickAvatar()
     {
+        if (_sessionOnlyMode) return;
         if (MapFileLoader.Instance != null)
         {
             MapFileLoader.Instance.OpenFilePicker((tex) => {
-                // Previne lixo se o usuário trocar a imagem duas vezes na mesma tela
+                // Previne lixo se o usu�rio trocar a imagem duas vezes na mesma tela
                 if (_isNewAvatar && currentAvatarTex != null) Destroy(currentAvatarTex);
-                if (_previewSprite != null) Destroy(_previewSprite);
+                DestroyPreviewSprites();
 
                 currentAvatarTex = tex;
                 _isNewAvatar = true;
                 _avatarChanged = true;
-
-                _previewSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
-                avatarPreview.sprite = _previewSprite;
-                avatarPreview.color = Color.white;
+                _avatarCrop = new AvatarCropData();
+                SyncAvatarCropSliders();
+                UpdateAvatarPreview();
             });
         }
     }
 
     private void DoSave()
     {
+        if (_sessionOnlyMode)
+        {
+            DoSaveSessionChanges();
+            return;
+        }
         string cGold = "#E8C84A", cBlue = "#598CD9", cRed = "#D95959", cPurp = "#9D59D9";
 
         CharacterRecord newChar = new CharacterRecord();
@@ -450,15 +683,21 @@ public class CharacterCreatorScreen : MonoBehaviour
         if (_currentSystem == "D&D 5e")
         {
             newChar.name = string.IsNullOrEmpty(dndName.text) ? "Aventureiro" : dndName.text;
-            newChar.subText = $"Lvl {dndLevel.text} • {dndRace.text} {dndClass.text}";
+            newChar.subText = $"Lvl {dndLevel.text} � {dndRace.text} {dndClass.text}";
             newChar.statsStr = $"HP: <color={cGold}>{dndHPCurr.text}/{dndHPMax.text}</color>   CA: <color={cRed}>{dndAC.text}</color>   MOV: <color={cBlue}>{dndSpd.text}</color>";
         }
         else
         {
             newChar.name = string.IsNullOrEmpty(ordemName.text) ? "Agente" : ordemName.text;
-            newChar.subText = $"NEX {ordemNEX.text}% • {ordemClass.text} {ordemTrilha.text}";
+            newChar.subText = $"NEX {ordemNEX.text}% � {ordemClass.text} {ordemTrilha.text}";
             newChar.statsStr = $"PV: <color={cGold}>{ordemPVCurr.text}/{ordemPVMax.text}</color>   PE: <color={cBlue}>{ordemPECurr.text}/{ordemPEMax.text}</color>   SAN: <color={cPurp}>{ordemSANCurr.text}/{ordemSANMax.text}</color>   DEF: <color={cRed}>{ordemDefesa.text}</color>";
         }
+
+        newChar.characterType = _currentCharacterType;
+        newChar.state = _currentState;
+        newChar.avatarCrop = CloneAvatarCrop();
+        CharacterRecord existingRecord = CharacterManager.Instance != null && !string.IsNullOrEmpty(_editingId) ? CharacterManager.Instance.GetCharacter(_editingId) : null;
+        newChar.defaultRenderInProjection = existingRecord == null ? true : existingRecord.defaultRenderInProjection;
 
         // Empacota toda a vida do personagem!
         foreach (var kvp in _fieldMap)
@@ -472,48 +711,82 @@ public class CharacterCreatorScreen : MonoBehaviour
         }
         if (DashboardOverlay.Instance != null) DashboardOverlay.Instance.RefreshDashboard();
 
-        if (_previewSprite != null) { Destroy(_previewSprite); _previewSprite = null; }
+        DestroyPreviewSprites();
         _isNewAvatar = false;
 
         ClosePanel();
     }
 
-    // --- NOVA: ABRE A FICHA PARA EDIÇÃO ---
+
+    private void DoSaveSessionChanges()
+    {
+        if (CharacterManager.Instance == null || string.IsNullOrEmpty(_editingId))
+        {
+            ClosePanel();
+            return;
+        }
+
+        Dictionary<string, string> changes = new Dictionary<string, string>();
+        foreach (var kvp in _fieldMap)
+        {
+            if (IsSessionEditableKey(kvp.Key) && kvp.Value != null)
+                changes[kvp.Key] = kvp.Value.text;
+        }
+
+        CharacterManager.Instance.UpdateCharacterSessionFields(_editingId, changes);
+        if (DashboardOverlay.Instance != null) DashboardOverlay.Instance.RefreshDashboard();
+        ClosePanel();
+    }
+
+    private void ShowSheet(bool returnToDashboard)
+    {
+        _returnToDashboardOnClose = returnToDashboard;
+
+        if (_mainScreen != null)
+            _mainScreen.SetActive(true);
+
+        if (_sheetCanvas != null)
+        {
+            _sheetCanvas.overrideSorting = true;
+            _sheetCanvas.sortingOrder = SHEET_SORTING_ORDER;
+        }
+
+        if (_mainScreen != null)
+            _mainScreen.transform.SetAsLastSibling();
+    }
+
+    // --- NOVA: ABRE A FICHA PARA EDI��O ---
     public void OpenForEdit(CharacterRecord record)
     {
-        // 1. Limpeza inicial de lixo da sessão anterior
-        if (_previewSprite != null) { Destroy(_previewSprite); _previewSprite = null; }
+        // 1. Limpeza inicial de lixo da sess�o anterior
+        DestroyPreviewSprites();
         _isNewAvatar = false;
 
         _editingId = record.id;
         _currentSystem = record.system;
         _avatarChanged = false;
+        _currentCharacterType = record.characterType;
+        _currentState = record.state;
+        _avatarCrop = record.avatarCrop != null ? new AvatarCropData { zoom = record.avatarCrop.zoom, offsetX = record.avatarCrop.offsetX, offsetY = record.avatarCrop.offsetY } : new AvatarCropData();
+        UpdateEntityButtons();
+        SyncAvatarCropSliders();
         _headerTitle.text = "EDITANDO FICHA: " + _currentSystem.ToUpper();
 
         // Limpa lixo anterior
         foreach (var kvp in _fieldMap) kvp.Value.text = "";
 
-        // 2. Carrega foto do HD e aplica a correção do Sprite AQUI!
+        // 2. Carrega foto do HD e aplica o enquadramento salvo.
         currentAvatarTex = CharacterManager.Instance.LoadAvatar(record.avatarFileName);
-        if (currentAvatarTex != null)
-        {
-            _previewSprite = Sprite.Create(currentAvatarTex, new Rect(0, 0, currentAvatarTex.width, currentAvatarTex.height), new Vector2(0.5f, 0.5f));
-            avatarPreview.sprite = _previewSprite;
-            avatarPreview.color = Color.white;
-        }
-        else
-        {
-            avatarPreview.color = Color.clear;
-        }
+        UpdateAvatarPreview();
 
         // Carrega todos os campos!
-        foreach (var field in record.fields)
-        {
-            if (_fieldMap.TryGetValue(field.key, out var input))
+        if (record.fields != null) foreach (var field in record.fields)
             {
-                input.text = field.value;
+                if (_fieldMap.TryGetValue(field.key, out var input))
+                {
+                    input.text = field.value;
+                }
             }
-        }
 
         dndSpellsOpen = false; if (dndSpellsContainer != null) dndSpellsContainer.SetActive(false);
         ordemRituaisOpen = false; if (ordemRituaisContainer != null) ordemRituaisContainer.SetActive(false);
@@ -523,24 +796,38 @@ public class CharacterCreatorScreen : MonoBehaviour
 
         UpdateScrollHeight();
         formScrollContent.anchoredPosition = new Vector2(formScrollContent.anchoredPosition.x, 0);
-        _mainScreen.SetActive(true);
-        _mainScreen.transform.SetAsLastSibling();
+        ApplySheetInteractionMode(false);
+        ShowSheet(true);
+    }
+
+
+
+    public void OpenForSession(CharacterRecord record)
+    {
+        OpenForEdit(record);
+        _headerTitle.text = "FICHA EM SESSAO: " + _currentSystem.ToUpper();
+        ApplySheetInteractionMode(true);
     }
 
     public void OpenPanel(string systemName)
     {
-        // 1. Limpeza inicial de lixo da sessão anterior
-        if (_previewSprite != null) { Destroy(_previewSprite); _previewSprite = null; }
+        // 1. Limpeza inicial de lixo da sess�o anterior
+        DestroyPreviewSprites();
         _isNewAvatar = false;
 
-        _editingId = null; // Modo de Criação Limpo
+        _editingId = null; // Modo de Cria��o Limpo
         _avatarChanged = true;
+        _currentCharacterType = CharacterType.Player;
+        _currentState = CharacterState.Active;
+        _avatarCrop = new AvatarCropData();
+        UpdateEntityButtons();
+        SyncAvatarCropSliders();
         _currentSystem = systemName;
         _headerTitle.text = "MONTAGEM DE FICHA: " + systemName.ToUpper();
 
-        // 2. Garante que a foto está vazia para a ficha nova
+        // 2. Garante que a foto est� vazia para a ficha nova
         currentAvatarTex = null;
-        avatarPreview.color = Color.clear;
+        UpdateAvatarPreview();
 
         foreach (var kvp in _fieldMap) kvp.Value.text = "";
         if (dndHPCurr != null) { dndHPCurr.text = "10"; dndHPMax.text = "10"; }
@@ -554,16 +841,31 @@ public class CharacterCreatorScreen : MonoBehaviour
 
         UpdateScrollHeight();
         formScrollContent.anchoredPosition = new Vector2(formScrollContent.anchoredPosition.x, 0);
-        _mainScreen.SetActive(true);
-        _mainScreen.transform.SetAsLastSibling();
+        ApplySheetInteractionMode(false);
+        ShowSheet(true);
     }
 
     public void ClosePanel()
     {
-        if (_previewSprite != null) { Destroy(_previewSprite); _previewSprite = null; }
-        if (_isNewAvatar && currentAvatarTex != null) { Destroy(currentAvatarTex); currentAvatarTex = null; }
-        _isNewAvatar = false;
+        DestroyPreviewSprites();
 
-        _mainScreen.SetActive(false);
+        if (_isNewAvatar && currentAvatarTex != null)
+        {
+            Destroy(currentAvatarTex);
+            currentAvatarTex = null;
+        }
+
+        _isNewAvatar = false;
+        _sessionOnlyMode = false;
+
+        if (_mainScreen != null)
+            _mainScreen.SetActive(false);
+
+        if (_returnToDashboardOnClose && DashboardOverlay.Instance != null)
+        {
+            DashboardOverlay.Instance.OpenPanel();
+        }
+
+        _returnToDashboardOnClose = false;
     }
 }

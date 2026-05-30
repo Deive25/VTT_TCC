@@ -81,6 +81,13 @@ public class LayerManager : MonoBehaviour
     public void RemoveLayer(string id)
     {
         LayerData layer = _layers.Find(l => l.id == id);
+        string layerName = layer != null ? layer.name : "este tabuleiro";
+        UIConfirmDialog.Show("Remover tabuleiro", "Esta acao apaga o mapa/camada atual e sua nevoa. Deseja remover " + layerName + "?", () => RemoveLayerImmediate(id));
+    }
+
+    private void RemoveLayerImmediate(string id)
+    {
+        LayerData layer = _layers.Find(l => l.id == id);
         if (layer != null)
         {
             // --- CORREÇÃO: Limpeza de Memória ---
@@ -105,6 +112,7 @@ public class LayerManager : MonoBehaviour
                 {
                     DefaultBoardRenderer defaultBoard = FindAnyObjectByType<DefaultBoardRenderer>();
                     if (defaultBoard != null) defaultBoard.SetVisible(true);
+                    if (KinectManager.Instance != null) KinectManager.Instance.InvalidateCalibrationForMapChange("tabuleiro removido");
                 }
             }
             MapEvents.FireLayersChanged();
@@ -142,8 +150,12 @@ public class LayerManager : MonoBehaviour
 
     public void SetActiveLayer(string id)
     {
+        bool changedActiveLayer = ActiveLayerId != id;
         ActiveLayerId = id;
         foreach (var l in _layers) l.gameObject.SetActive(l.id == id);
+
+        if (changedActiveLayer && KinectManager.Instance != null)
+            KinectManager.Instance.InvalidateCalibrationForMapChange("troca de tabuleiro/camada ativa");
 
         MapEvents.FireActiveLayerChanged(id);
         MapEvents.FireLayersChanged();

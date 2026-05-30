@@ -12,10 +12,27 @@ using System;
 public class CharField { public string key; public string value; }
 
 [Serializable]
+public enum CharacterType { Player = 0, NPC = 1, Enemy = 2 }
+
+[Serializable]
+public enum CharacterState { Active = 0, Dead = 1, Hidden = 2 }
+
+[Serializable]
+public class AvatarCropData
+{
+    public float zoom = 1f;
+    public float offsetX = 0f;
+    public float offsetY = 0f;
+}
+[Serializable]
 public class CharacterRecord
 {
     public string id; public string system; public string name; public string subText;
     public string statsStr; public string avatarFileName;
+    public CharacterType characterType = CharacterType.Player;
+    public CharacterState state = CharacterState.Active;
+    public AvatarCropData avatarCrop = new AvatarCropData();
+    public bool defaultRenderInProjection = true;
     public List<CharField> fields = new List<CharField>();
 }
 
@@ -49,6 +66,19 @@ public class CharacterManager : MonoBehaviour
             string json = File.ReadAllText(dbPath);
             Database = JsonUtility.FromJson<CharacterDB>(json) ?? new CharacterDB();
         }
+        NormalizeDatabase();
+    }
+
+    private void NormalizeDatabase()
+    {
+        if (Database == null) Database = new CharacterDB();
+        if (Database.records == null) Database.records = new List<CharacterRecord>();
+
+        foreach (var record in Database.records)
+        {
+            if (record.fields == null) record.fields = new List<CharField>();
+            if (record.avatarCrop == null) record.avatarCrop = new AvatarCropData();
+        }
     }
 
     public void SaveDatabase()
@@ -59,6 +89,25 @@ public class CharacterManager : MonoBehaviour
     }
 
     public CharacterRecord GetCharacter(string id) => Database.records.Find(r => r.id == id);
+    public static string GetCharacterTypeLabel(CharacterType type)
+    {
+        switch (type)
+        {
+            case CharacterType.NPC: return "NPC";
+            case CharacterType.Enemy: return "Inimigo";
+            default: return "Jogador";
+        }
+    }
+
+    public static string GetCharacterStateLabel(CharacterState state)
+    {
+        switch (state)
+        {
+            case CharacterState.Dead: return "Morto";
+            case CharacterState.Hidden: return "Oculto";
+            default: return "Ativo";
+        }
+    }
 
     public void UpdateCharacterField(string id, string key, string value)
     {
@@ -69,11 +118,30 @@ public class CharacterManager : MonoBehaviour
             if (field != null) field.value = value;
             else record.fields.Add(new CharField { key = key, value = value });
 
+            RebuildDerivedFields(record);
             RebuildStatsStr(record);
             SaveDatabase();
         }
     }
 
+
+    public void UpdateCharacterSessionFields(string id, Dictionary<string, string> fieldValues)
+    {
+        var record = GetCharacter(id);
+        if (record == null || fieldValues == null) return;
+
+        EnsureRecordDefaults(record);
+        foreach (var kvp in fieldValues)
+        {
+            var field = record.fields.Find(f => f.key == kvp.Key);
+            if (field != null) field.value = kvp.Value;
+            else record.fields.Add(new CharField { key = kvp.Key, value = kvp.Value });
+        }
+
+        RebuildDerivedFields(record);
+        RebuildStatsStr(record);
+        SaveDatabase();
+    }
     private void RebuildStatsStr(CharacterRecord record)
     {
         string cGold = "#E8C84A", cBlue = "#598CD9", cRed = "#D95959", cPurp = "#9D59D9";
@@ -87,9 +155,66 @@ public class CharacterManager : MonoBehaviour
         }
     }
     private string GetField(CharacterRecord r, string k) { var f = r.fields.Find(x => x.key == k); return f != null && !string.IsNullOrEmpty(f.value) ? f.value : "0"; }
+    private void RebuildDerivedFields(CharacterRecord record)
+    {
+        if (record == null) return;
+        EnsureRecordDefaults(record);
+
+        if (record.system == "D&D 5e")
+        {
+            string[] attrs = { "str", "dex", "con", "int", "wis", "cha" };
+            foreach (string attr in attrs)
+            {
+                int score = GetIntField(record, "dnd_" + attr, 10);
+                UpsertField(record, "dnd_" + attr + "_mod", FormatSigned(Mathf.FloorToInt((score - 10) / 2f)));
+            }
+
+            int level = Mathf.Max(1, GetIntField(record, "dnd_level", 1));
+            int proficiency = 2 + Mathf.FloorToInt((level - 1) / 4f);
+            UpsertField(record, "dnd_prof", FormatSigned(proficiency));
+        }
+        else if (record.system == "Ordem Paranormal")
+        {
+            string[] attrs = { "agi", "for", "int", "pre", "vig" };
+            foreach (string attr in attrs)
+            {
+                int score = GetIntField(record, "ord_" + attr, 0);
+                UpsertField(record, "ord_" + attr + "_mod", FormatSigned(score));
+            }
+        }
+    }
+
+    private int GetIntField(CharacterRecord record, string key, int fallback)
+    {
+        if (record == null || record.fields == null) return fallback;
+        var field = record.fields.Find(f => f.key == key);
+        if (field == null || string.IsNullOrWhiteSpace(field.value)) return fallback;
+        return int.TryParse(field.value, out int parsed) ? parsed : fallback;
+    }
+
+    private void UpsertField(CharacterRecord record, string key, string value)
+    {
+        var field = record.fields.Find(f => f.key == key);
+        if (field != null) field.value = value;
+        else record.fields.Add(new CharField { key = key, value = value });
+    }
+
+    private string FormatSigned(int value)
+    {
+        return value >= 0 ? "+" + value : value.ToString();
+    }
+
+    private void EnsureRecordDefaults(CharacterRecord record)
+    {
+        if (record == null) return;
+        if (record.fields == null) record.fields = new List<CharField>();
+        if (record.avatarCrop == null) record.avatarCrop = new AvatarCropData();
+    }
 
     public void SaveCharacter(CharacterRecord record, Texture2D newAvatar, bool isEdit, bool avatarChanged)
     {
+        EnsureRecordDefaults(record);
+        RebuildDerivedFields(record);
         if (isEdit)
         {
             var existing = Database.records.Find(r => r.id == record.id);

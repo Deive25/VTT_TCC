@@ -6,6 +6,7 @@
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
+using System.Collections.Generic;
 
 // Enumeração para os formatos de visão
 public enum VisionShape { Circle = 0, Square = 1, Cone = 2 }
@@ -15,6 +16,8 @@ public class TokenController : MonoBehaviour
     public string charId;
     public bool isPlaced = false;
     public SpriteRenderer borderRenderer;
+    public bool renderInProjection = true;
+    private SpriteRenderer[] _projectionRenderers;
 
     [Header("Kinect Tracking")]
     public int kinectTrackingId = -1; // -1 = Digital. Se tiver número, é físico.
@@ -49,9 +52,60 @@ public class TokenController : MonoBehaviour
         _fogController = FindAnyObjectByType<FogOfWarController>();
         _mainCam = Camera.main;
         _spriteRenderer = GetComponent<SpriteRenderer>();
+        _projectionRenderers = GetComponentsInChildren<SpriteRenderer>(true);
+        TokenSystem.RegisterActiveToken(this);
+        ApplyProjectionVisibility();
         _lastFogPos = transform.position;
     }
 
+
+    private void OnDestroy()
+    {
+        TokenSystem.UnregisterActiveToken(this);
+        ReleaseRuntimeSprite(GetComponent<SpriteRenderer>());
+    }
+
+    private void ReleaseRuntimeSprite(SpriteRenderer renderer)
+    {
+        if (renderer == null || renderer.sprite == null || renderer.sprite == VTTLayout.GetCircleSprite()) return;
+        Texture2D tex = renderer.sprite.texture;
+        Destroy(renderer.sprite);
+        if (tex != null) Destroy(tex);
+    }
+
+    public void SetRenderInProjection(bool render)
+    {
+        renderInProjection = render;
+
+        if (CharacterManager.Instance != null)
+        {
+            CharacterRecord record = CharacterManager.Instance.GetCharacter(charId);
+            if (record != null)
+            {
+                record.defaultRenderInProjection = render;
+                CharacterManager.Instance.SaveDatabase();
+            }
+        }
+
+        ApplyProjectionVisibility();
+    }
+
+    public void ApplyProjectionVisibility()
+    {
+        if (_projectionRenderers == null || _projectionRenderers.Length == 0)
+            _projectionRenderers = GetComponentsInChildren<SpriteRenderer>(true);
+
+        bool hiddenFromProjection = TokenSystem.HideTokensInProjection || !renderInProjection;
+        int targetLayer = hiddenFromProjection ? TokenSystem.ProjectionHiddenLayer : 0;
+        SetLayerRecursively(transform, targetLayer);
+    }
+
+    private void SetLayerRecursively(Transform root, int layer)
+    {
+        root.gameObject.layer = layer;
+        foreach (Transform child in root)
+            SetLayerRecursively(child, layer);
+    }
     public void SetBorderColor(Color color) { if (borderRenderer != null) borderRenderer.color = color; }
     public void CycleBorderColor() { colorIdx = (colorIdx + 1) % palette.Length; SetBorderColor(palette[colorIdx]); }
 
@@ -261,13 +315,41 @@ public class TokenSystem : MonoBehaviour
 {
     public static TokenSystem Instance { get; private set; }
 
+    public const int ProjectionHiddenLayer = 1;
+    public static bool HideTokensInProjection { get; private set; }
     public static float GlobalTokenScale = 0.31f;
+    private static readonly List<TokenController> ActiveTokens = new List<TokenController>();
 
     private GameObject _panel;
     private RectTransform contentRT;
     private TokenController activeToken;
     private TMP_Text nameLbl;
 
+
+    public static void SetHideTokensInProjection(bool hide)
+    {
+        HideTokensInProjection = hide;
+        RefreshProjectionVisibility();
+    }
+
+    public static void RegisterActiveToken(TokenController token)
+    {
+        if (token != null && !ActiveTokens.Contains(token)) ActiveTokens.Add(token);
+    }
+
+    public static void UnregisterActiveToken(TokenController token)
+    {
+        if (token != null) ActiveTokens.Remove(token);
+    }
+
+    public static void RefreshProjectionVisibility()
+    {
+        for (int i = ActiveTokens.Count - 1; i >= 0; i--)
+        {
+            if (ActiveTokens[i] == null) ActiveTokens.RemoveAt(i);
+            else ActiveTokens[i].ApplyProjectionVisibility();
+        }
+    }
     private void Awake()
     {
         Instance = this;
@@ -290,7 +372,7 @@ public class TokenSystem : MonoBehaviour
 
         SpriteRenderer avatarSR = go.AddComponent<SpriteRenderer>();
         Texture2D tex = CharacterManager.Instance.LoadAvatar(record.avatarFileName);
-        avatarSR.sprite = VTTLayout.CreateCircularWorldSprite(tex);
+        avatarSR.sprite = VTTLayout.CreateCircularWorldSprite(tex, record.avatarCrop);
 
         // --- CORREÇÃO: Passa por cima da névoa na primeira arrastada ---
         avatarSR.sortingOrder = 501;
@@ -301,7 +383,7 @@ public class TokenSystem : MonoBehaviour
         borderGO.transform.localScale = new Vector3(1.15f, 1.15f, 1f);
         SpriteRenderer borderSR = borderGO.AddComponent<SpriteRenderer>();
         borderSR.sprite = VTTLayout.GetCircleSprite();
-        borderSR.color = record.system == "D&D 5e" ? VTTLayout.C_TEXT_GOLD : new Color(0.85f, 0.25f, 0.25f, 1f);
+        borderSR.color = GetTokenTypeColor(record);
         borderSR.sortingOrder = 500;
 
         CircleCollider2D col = go.AddComponent<CircleCollider2D>();
@@ -310,9 +392,22 @@ public class TokenSystem : MonoBehaviour
         TokenController tc = go.AddComponent<TokenController>();
         tc.charId = charId;
         tc.borderRenderer = borderSR;
+        tc.renderInProjection = record.defaultRenderInProjection;
+        tc.ApplyProjectionVisibility();
         return tc;
     }
 
+
+    private static Color GetTokenTypeColor(CharacterRecord record)
+    {
+        if (record == null) return Color.white;
+        switch (record.characterType)
+        {
+            case CharacterType.NPC: return new Color(0.25f, 0.55f, 0.90f, 1f);
+            case CharacterType.Enemy: return new Color(0.90f, 0.22f, 0.20f, 1f);
+            default: return record.system == "D&D 5e" ? VTTLayout.C_TEXT_GOLD : new Color(0.85f, 0.25f, 0.25f, 1f);
+        }
+    }
     private void BuildMiniUI()
     {
         Canvas cv = FindAnyObjectByType<Canvas>();
@@ -358,6 +453,16 @@ public class TokenSystem : MonoBehaviour
             BuildStatRow("SAN", "ord_san_curr", "ord_san_max", record, new Color(0.6f, 0.2f, 0.85f), ref y);
         }
 
+        Button btnSheet = VTTLayout.BtnFull(contentRT, y, 30f, 0f, "ABRIR FICHA DA SESSAO", VTTLayout.C_BTN_PRI, VTTLayout.C_BDR_ACC, Color.white, 10.5f);
+        string sheetCharId = record.id;
+        btnSheet.onClick.AddListener(() => {
+            if (CharacterCreatorScreen.Instance != null && CharacterManager.Instance != null)
+            {
+                CharacterRecord target = CharacterManager.Instance.GetCharacter(sheetCharId);
+                if (target != null) CharacterCreatorScreen.Instance.OpenForSession(target);
+            }
+        });
+        y -= 40f;
         y -= 5f;
         VTTLayout.Box("Div", contentRT, 0, y, 250f, 1f, VTTLayout.C_BDR_DEFAULT);
         y -= 15f;
@@ -458,18 +563,44 @@ public class TokenSystem : MonoBehaviour
         });
         y -= 40f;
 
+        string projectionText = activeToken.renderInProjection ? "PROJECAO: VISIVEL" : "PROJECAO: OCULTO";
+        Color projectionColor = activeToken.renderInProjection ? VTTLayout.C_BTN_ACTIVE : VTTLayout.C_BTN_SEC;
+        Button btnProjection = VTTLayout.BtnFull(contentRT, y, 30f, 0f, projectionText, projectionColor, VTTLayout.C_BDR_DEFAULT, Color.white, 11f);
+        btnProjection.onClick.AddListener(() => {
+            if (activeToken != null)
+            {
+                activeToken.SetRenderInProjection(!activeToken.renderInProjection);
+                OpenMiniUI(activeToken);
+            }
+        });
+        y -= 40f;
         Button btnDel = VTTLayout.BtnFull(contentRT, y, 34f, 0f, "REMOVER DO MAPA", VTTLayout.C_BTN_CLOSE, VTTLayout.C_BDR_CLOSE, Color.white, 12f);
         btnDel.onClick.AddListener(() => {
-            if (activeToken != null) Destroy(activeToken.gameObject);
-            ClosePanel();
+            if (activeToken != null) UIConfirmDialog.Show("Remover token", "Remove este token do mapa atual, sem apagar a ficha do personagem.", () => {
+                if (activeToken != null) Destroy(activeToken.gameObject);
+                ClosePanel();
+            });
         });
         y -= 44f;
 
         _panel.GetComponent<RectTransform>().sizeDelta = new Vector2(280f, Mathf.Abs(y) + 60f);
+        FitMiniUIToScreen();
         _panel.SetActive(true);
         _panel.transform.SetAsLastSibling();
     }
 
+
+    private void FitMiniUIToScreen()
+    {
+        if (_panel == null) return;
+        RectTransform rt = _panel.GetComponent<RectTransform>();
+        if (rt == null) return;
+
+        float maxH = Mathf.Max(260f, Screen.height - 48f);
+        float scale = Mathf.Min(1f, maxH / Mathf.Max(1f, rt.sizeDelta.y));
+        rt.localScale = Vector3.one * Mathf.Clamp(scale, 0.72f, 1f);
+        rt.anchoredPosition = new Vector2(-20f, 20f);
+    }
     private void BuildStatRow(string label, string currKey, string maxKey, CharacterRecord record, Color color, ref float y)
     {
         VTTLayout.LabelFixed(contentRT, 0, y, 60f, 30f, 12f, color, FontStyles.Bold, TextAlignmentOptions.MidlineLeft).text = label;

@@ -62,6 +62,35 @@ public static class VTTLayout
     public static Color Selected(Color c) => Color.Lerp(c, Color.white, 0.05f);
     public static Color Disabled(Color c) => new Color(c.r * 0.5f, c.g * 0.5f, c.b * 0.5f, 0.6f);
 
+    public static Canvas GetOverlayCanvas(string name = "VTT_OverlayCanvas", int sortingOrder = 10000)
+    {
+        GameObject go = GameObject.Find(name);
+        if (go == null) go = new GameObject(name);
+        go.transform.SetParent(null, false);
+
+        Canvas canvas = go.GetComponent<Canvas>();
+        if (canvas == null) canvas = go.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.overrideSorting = true;
+        canvas.sortingOrder = sortingOrder;
+
+        CanvasScaler scaler = go.GetComponent<CanvasScaler>();
+        if (scaler == null) scaler = go.AddComponent<CanvasScaler>();
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(1920f, 1080f);
+        scaler.matchWidthOrHeight = 0.5f;
+
+        if (go.GetComponent<GraphicRaycaster>() == null) go.AddComponent<GraphicRaycaster>();
+
+        if (UnityEngine.Object.FindAnyObjectByType<EventSystem>() == null)
+        {
+            GameObject eventSystem = new GameObject("EventSystem");
+            eventSystem.AddComponent<EventSystem>();
+            eventSystem.AddComponent<StandaloneInputModule>();
+        }
+
+        return canvas;
+    }
     public static RectTransform Panel(string name, Transform parent, Vector2 anchorMin, Vector2 anchorMax, Vector2 pivot, float width, Color bgColor)
     {
         GameObject go = New(name, parent);
@@ -197,9 +226,13 @@ public static class VTTLayout
 
         GameObject lgo = New("Lbl", go.transform);
         RectTransform lrt = lgo.AddComponent<RectTransform>();
-        lrt.anchorMin = Vector2.zero; lrt.anchorMax = Vector2.one; lrt.sizeDelta = Vector2.zero;
+        lrt.anchorMin = Vector2.zero; lrt.anchorMax = Vector2.one;
+        lrt.offsetMin = new Vector2(4f, 2f);
+        lrt.offsetMax = new Vector2(-4f, -2f);
         FontStyles fs = bold ? FontStyles.Bold : FontStyles.Normal;
-        TMP_Text t = TxtNode(lgo, fontSize, textColor, fs, TextAlignmentOptions.Center); t.text = label;
+        TMP_Text t = TxtNode(lgo, fontSize, textColor, fs, TextAlignmentOptions.Center);
+        t.enableWordWrapping = true;
+        t.text = label;
         return btn;
     }
 
@@ -367,6 +400,62 @@ public static class VTTLayout
         return avImg;
     }
 
+    public static Sprite CreateCroppedAvatarSprite(Texture2D sourceTex, AvatarCropData crop, float pixelsPerUnit = 100f, int outputSize = 256, bool circularMask = true)
+    {
+        if (sourceTex == null) return circularMask ? GetCircleSprite() : null;
+
+        if (crop == null) crop = new AvatarCropData();
+
+        int size = Mathf.Max(64, outputSize);
+        int w = sourceTex.width;
+        int h = sourceTex.height;
+        int baseSize = Mathf.Min(w, h);
+        float halfBase = baseSize * 0.5f;
+        float centerX = w * 0.5f;
+        float centerY = h * 0.5f;
+        float zoom = Mathf.Clamp(crop.zoom, 0.35f, 5f);
+        float offsetX = Mathf.Clamp(crop.offsetX, -1.5f, 1.5f);
+        float offsetY = Mathf.Clamp(crop.offsetY, -1.5f, 1.5f);
+
+        Texture2D tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
+        Color[] finalPixels = new Color[size * size];
+        Color clear = new Color(0, 0, 0, 0);
+        float radius = size * 0.5f;
+        float radiusSq = radius * radius;
+
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float dx = x + 0.5f - radius;
+                float dy = y + 0.5f - radius;
+
+                if (circularMask && dx * dx + dy * dy > radiusSq)
+                {
+                    finalPixels[y * size + x] = clear;
+                    continue;
+                }
+
+                float normalizedX = dx / radius;
+                float normalizedY = dy / radius;
+                float sampleX = centerX + ((normalizedX / zoom) - offsetX) * halfBase;
+                float sampleY = centerY + ((normalizedY / zoom) - offsetY) * halfBase;
+
+                sampleX = Mathf.Clamp(sampleX, 0f, w - 1f);
+                sampleY = Mathf.Clamp(sampleY, 0f, h - 1f);
+                finalPixels[y * size + x] = sourceTex.GetPixelBilinear(sampleX / Mathf.Max(1f, w - 1f), sampleY / Mathf.Max(1f, h - 1f));
+            }
+        }
+
+        tex.SetPixels(finalPixels);
+        tex.Apply();
+        return Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), pixelsPerUnit);
+    }
+
+    public static Sprite CreateCircularWorldSprite(Texture2D sourceTex, AvatarCropData crop)
+    {
+        return CreateCroppedAvatarSprite(sourceTex, crop, 100f, 256, true);
+    }
     public static Sprite CreateCircularWorldSprite(Texture2D sourceTex)
     {
         if (sourceTex == null) return GetCircleSprite();
@@ -400,7 +489,21 @@ public static class VTTLayout
     public static GameObject New(string name, Transform parent) { var go = new GameObject(name); go.transform.SetParent(parent, false); return go; }
     public static void Deco(GameObject go, Color color) { Image img = go.AddComponent<Image>(); img.color = color; img.raycastTarget = false; }
     public static void Deco(RectTransform rt, Color color) { Deco(rt.gameObject, color); }
-    private static TMP_Text TxtNode(GameObject go, float fontSize, Color color, FontStyles style, TextAlignmentOptions align) { TMP_Text t = go.AddComponent<TextMeshProUGUI>(); t.fontSize = fontSize; t.color = color; t.fontStyle = style; t.alignment = align; t.raycastTarget = false; return t; }
+    private static TMP_Text TxtNode(GameObject go, float fontSize, Color color, FontStyles style, TextAlignmentOptions align)
+    {
+        TMP_Text t = go.AddComponent<TextMeshProUGUI>();
+        t.fontSize = fontSize;
+        t.enableAutoSizing = true;
+        t.fontSizeMin = Mathf.Max(7f, fontSize * 0.70f);
+        t.fontSizeMax = fontSize;
+        t.overflowMode = TextOverflowModes.Ellipsis;
+        t.color = color;
+        t.fontStyle = style;
+        t.alignment = align;
+        t.raycastTarget = false;
+        t.extraPadding = true;
+        return t;
+    }
 }
 
 public class ButtonFeedback : MonoBehaviour, IPointerDownHandler, IPointerUpHandler, IPointerEnterHandler, IPointerExitHandler

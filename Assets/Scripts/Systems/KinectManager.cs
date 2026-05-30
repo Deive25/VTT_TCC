@@ -104,6 +104,7 @@ public class KinectManager : MonoBehaviour
     private Vector2 lastProjectionNormalized = Vector2.zero;
     private Vector3 lastMappedWorldPosition = Vector3.zero;
     private bool lastPointInsideProjection = false;
+    public bool IsCalibrationValid => kinectToProjectionHomography != null;
     private bool isCapturingCalibrationPoint = false;
     private int lastStablePieceCount = 0;
 
@@ -142,10 +143,63 @@ public class KinectManager : MonoBehaviour
         else Debug.LogError("ERRO: Kinect nao encontrado ou DLL faltando.");
 
         LoadCalibration();
-        RebuildHomography();
         ApplyProjectionROIToTracker();
     }
 
+
+    public void PrepareForPhysicalMode()
+    {
+        InvalidateCalibration("troca para modo fisico", true);
+    }
+
+    public void ReleasePhysicalTrackingPreserveTokens()
+    {
+        foreach (var kvp in boundTokens)
+        {
+            if (kvp.Value == null) continue;
+            kvp.Value.kinectTrackingId = -1;
+            kvp.Value.SetLostState(false);
+        }
+
+        foreach (TokenController orphan in orphanedTokens)
+        {
+            if (orphan == null) continue;
+            orphan.kinectTrackingId = -1;
+            orphan.SetLostState(false);
+        }
+
+        if (pendingBindingToken != null)
+        {
+            pendingBindingToken.kinectTrackingId = -1;
+            pendingBindingToken.SetLostState(false);
+            pendingBindingToken = null;
+        }
+
+        ResetTrackingState();
+        currentCalibStep = CalibStep.None;
+        UpdateCalibVisual();
+    }
+
+    public void InvalidateCalibrationForMapChange(string reason)
+    {
+        InvalidateCalibration(reason, PlayerDisplaySystem.Instance != null && PlayerDisplaySystem.Instance.currentMode == VTTMode.Physical_Table);
+    }
+
+    public void InvalidateCalibration(string reason, bool startNewCalibration)
+    {
+        ResetTrackingState();
+        ClearProjectionROISafe();
+        kinectToProjectionHomography = null;
+        PlayerPrefs.DeleteKey("CalibTL_X"); PlayerPrefs.DeleteKey("CalibTL_Y");
+        PlayerPrefs.DeleteKey("CalibTR_X"); PlayerPrefs.DeleteKey("CalibTR_Y");
+        PlayerPrefs.DeleteKey("CalibBL_X"); PlayerPrefs.DeleteKey("CalibBL_Y");
+        PlayerPrefs.DeleteKey("CalibBR_X"); PlayerPrefs.DeleteKey("CalibBR_Y");
+        PlayerPrefs.Save();
+
+        currentCalibStep = startNewCalibration ? CalibStep.TopLeft : CalibStep.None;
+        UpdateCalibVisual();
+        Debug.Log("[KinectManager] Calibracao invalidada: " + reason + ". Nova calibracao necessaria antes do rastreamento fisico.");
+    }
     public void StartBinding(TokenController token)
     {
         pendingBindingToken = token;
@@ -159,12 +213,15 @@ public class KinectManager : MonoBehaviour
 
         if (Input.GetKeyDown(KeyCode.C))
         {
-            ClearProjectionROISafe();
-            ResetTrackingState();
-            currentCalibStep = CalibStep.TopLeft;
-            UpdateCalibVisual();
+            InvalidateCalibration("atalho manual de calibracao", true);
             Debug.Log("CALIBRACAO: Coloque uma peca no ALVO VERMELHO.");
         }
+
+        if (PlayerDisplaySystem.Instance != null && PlayerDisplaySystem.Instance.currentMode != VTTMode.Physical_Table)
+            return;
+
+        if (!IsCalibrationValid && currentCalibStep == CalibStep.None)
+            return;
 
         ProcessFrame();
         int count = GetPieceCount();
@@ -545,9 +602,6 @@ public class KinectManager : MonoBehaviour
     private Vector2 KinectPixelToProjection(Vector2 p)
     {
         if (kinectToProjectionHomography == null)
-            RebuildHomography();
-
-        if (kinectToProjectionHomography == null)
             return new Vector2(float.NaN, float.NaN);
 
         double x = p.x;
@@ -706,8 +760,12 @@ public class KinectManager : MonoBehaviour
             calibTopRight = new Vector2(PlayerPrefs.GetFloat("CalibTR_X"), PlayerPrefs.GetFloat("CalibTR_Y"));
             calibBottomLeft = new Vector2(PlayerPrefs.GetFloat("CalibBL_X"), PlayerPrefs.GetFloat("CalibBL_Y"));
             calibBottomRight = new Vector2(PlayerPrefs.GetFloat("CalibBR_X"), PlayerPrefs.GetFloat("CalibBR_Y"));
+            RebuildHomography();
         }
-        RebuildHomography();
+        else
+        {
+            kinectToProjectionHomography = null;
+        }
     }
 
     private void OnGUI()
@@ -718,6 +776,12 @@ public class KinectManager : MonoBehaviour
             GUI.Label(new Rect(Screen.width / 2 - 150, 20, 300, 30), "AGUARDANDO MINIATURA FISICA NA MESA...");
         }
 
+
+        if (PlayerDisplaySystem.Instance != null && PlayerDisplaySystem.Instance.currentMode == VTTMode.Physical_Table && !IsCalibrationValid && currentCalibStep == CalibStep.None)
+        {
+            GUI.color = Color.yellow;
+            GUI.Box(new Rect(Screen.width / 2 - 280, 70, 560, 38), "RASTREAMENTO FISICO PAUSADO: recalibre para o mapa atual (tecla C)." );
+        }
         if (currentCalibStep != CalibStep.None)
         {
             if (kinectBlinkWarning)

@@ -154,7 +154,7 @@ public class GMUIController : MonoBehaviour
 
         y = DrawSecHeader(p, y, "TABULEIROS");
         VTTLayout.BtnFull(p, y, BH, -PAD * 2f, "+ NOVO TABULEIRO", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, VTTLayout.F_BTN, false).onClick.AddListener(() => {
-            if (MapFileLoader.Instance != null) MapFileLoader.Instance.OpenFilePicker((tex) => LayerManager.Instance.AddLayer(tex));
+            if (MapFileLoader.Instance != null) UIConfirmDialog.Show("Novo tabuleiro", "Carregar um novo mapa invalida a calibracao fisica atual e exige nova calibracao no modo Kinect.", () => MapFileLoader.Instance.OpenFilePicker((tex) => LayerManager.Instance.AddLayer(tex)));
         });
         y -= BH + GAP;
 
@@ -177,7 +177,15 @@ public class GMUIController : MonoBehaviour
             TokenSystem.GlobalTokenScale = s;
             valText.text = s.ToString("F2") + "x";
         });
-        y -= 26f + SGAP;
+        y -= 26f + GAP;
+
+        Button projectionToggle = VTTLayout.BtnFull(p, y, BH, -PAD * 2f, TokenSystem.HideTokensInProjection ? "TOKENS NA PROJECAO: OCULTOS" : "TOKENS NA PROJECAO: VISIVEIS", TokenSystem.HideTokensInProjection ? VTTLayout.C_BTN_SEC : VTTLayout.C_BTN_ACTIVE, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, 9.5f, true);
+        projectionToggle.onClick.AddListener(() => {
+            TokenSystem.SetHideTokensInProjection(!TokenSystem.HideTokensInProjection);
+            projectionToggle.GetComponentInChildren<TMP_Text>().text = TokenSystem.HideTokensInProjection ? "TOKENS NA PROJECAO: OCULTOS" : "TOKENS NA PROJECAO: VISIVEIS";
+            VTTLayout.SetBtnColor(projectionToggle, TokenSystem.HideTokensInProjection ? VTTLayout.C_BTN_SEC : VTTLayout.C_BTN_ACTIVE);
+        });
+        y -= BH + SGAP;
 
         ScrollRect tokScroll = VTTLayout.MakeScrollView("TokensScroll", p, 0, 0, 0, 0, out tokensContainer);
         RectTransform tokScrollRT = tokScroll.GetComponent<RectTransform>();
@@ -210,7 +218,7 @@ public class GMUIController : MonoBehaviour
         });
 
         VTTLayout.BtnFixed(p, PAD + hw + GAP, y, hw, BH, "EJETAR PARA\nO ALVO", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, 10f).onClick.AddListener(() => {
-            if (PlayerDisplaySystem.Instance != null) PlayerDisplaySystem.Instance.SendToMonitor();
+            if (PlayerDisplaySystem.Instance != null) UIConfirmDialog.Show("Ejetar projecao", "A visao dos jogadores sera enviada ao monitor selecionado. A janela principal sera mantida em modo janela.", () => PlayerDisplaySystem.Instance.SendToMonitor());
         });
         y -= BH + GAP;
 
@@ -242,9 +250,28 @@ public class GMUIController : MonoBehaviour
             }
         });
 
+        y -= (BH - 4f) + GAP;
+
+        Button recalibrateBtn = VTTLayout.BtnFull(p, y, BH - 4f, -PAD * 2f, "RECALIBRAR KINECT / MESA FISICA", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT_WARN, 9.5f, bold: false);
+        recalibrateBtn.onClick.AddListener(() => {
+            if (KinectManager.Instance != null)
+                UIConfirmDialog.Show("Recalibrar rastreamento", "Isto limpa o estado atual do Kinect e inicia nova calibracao para o mapa ativo.", () => KinectManager.Instance.InvalidateCalibration("recalibracao manual pela UI", true));
+        });
+
         return y - (BH - 4f) - SGAP;
     }
 
+
+    private Color GetCharacterTypeColor(CharacterRecord record)
+    {
+        if (record == null) return VTTLayout.C_ACCENT;
+        switch (record.characterType)
+        {
+            case CharacterType.NPC: return new Color(0.25f, 0.55f, 0.90f, 1f);
+            case CharacterType.Enemy: return new Color(0.90f, 0.22f, 0.20f, 1f);
+            default: return record.system == "D&D 5e" ? VTTLayout.C_TEXT_GOLD : new Color(0.85f, 0.25f, 0.25f, 1f);
+        }
+    }
     private void RefreshTokensList()
     {
         if (tokensContainer == null || CharacterManager.Instance == null) return;
@@ -266,18 +293,19 @@ public class GMUIController : MonoBehaviour
         {
             float itemH = 46f;
             RectTransform item = VTTLayout.Box("TokItem_" + rec.id, tokensContainer, PAD, ly, -PAD * 2f, itemH, VTTLayout.C_SEC_BG);
-            VTTLayout.AccentBar(item, 3f, rec.system == "D&D 5e" ? VTTLayout.C_TEXT_GOLD : new Color(0.85f, 0.25f, 0.25f, 1f));
+            VTTLayout.AccentBar(item, 3f, GetCharacterTypeColor(rec));
             item.GetComponent<Image>().raycastTarget = true;
 
             Texture2D tex = CharacterManager.Instance.LoadAvatar(rec.avatarFileName);
             Image avImg = VTTLayout.MakeMaskedAvatar(item, new Vector2(10f, 0f), new Vector2(34f, 34f), VTTLayout.C_CONTENT_BG);
             if (tex != null)
             {
-                avImg.sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
+                avImg.sprite = VTTLayout.CreateCroppedAvatarSprite(tex, rec.avatarCrop, 100f, 256, true);
                 avImg.color = Color.white;
             }
 
-            VTTLayout.LabelStretch("NameLabel", item, new Vector2(55f, 0f), new Vector2(0f, 0f), 12f, VTTLayout.C_TEXT_PANEL, FontStyles.Bold, TextAlignmentOptions.MidlineLeft).text = rec.name;
+            VTTLayout.LabelStretch("NameLabel", item, new Vector2(55f, 10f), new Vector2(0f, 0f), 12f, VTTLayout.C_TEXT_PANEL, FontStyles.Bold, TextAlignmentOptions.MidlineLeft).text = rec.name;
+            VTTLayout.LabelStretch("TypeLabel", item, new Vector2(55f, 0f), new Vector2(0f, -22f), 8.5f, VTTLayout.C_TEXT_DIM, FontStyles.Normal, TextAlignmentOptions.BottomLeft).text = CharacterManager.GetCharacterTypeLabel(rec.characterType) + " / " + CharacterManager.GetCharacterStateLabel(rec.state);
 
             EventTrigger trigger = item.gameObject.AddComponent<EventTrigger>();
             TokenController spawnedToken = null;
@@ -329,10 +357,10 @@ public class GMUIController : MonoBehaviour
             RectTransform itemRT = VTTLayout.Box("LayerItem_" + layer.id, layersContainer, PAD, ly, -PAD * 2f, itemH, bgColor);
             if (isActive) VTTLayout.AccentBar(itemRT, 4f, VTTLayout.C_ACCENT_LT);
 
-            Button selectBtn = VTTLayout.BtnFixed(itemRT, 0f, 0f, W_LEFT - 110f, itemH, "", Color.clear, Color.clear, Color.white, 10f);
+            Button selectBtn = VTTLayout.BtnFixed(itemRT, 0f, 0f, W_LEFT - 128f, itemH, "", Color.clear, Color.clear, Color.white, 10f);
             selectBtn.onClick.AddListener(() => { if (!isActive) LayerManager.Instance.SetActiveLayer(layer.id); });
 
-            float textX = isActive ? 14f : 8f; float textW = W_LEFT - PAD * 2f - 90f;
+            float textX = isActive ? 14f : 8f; float textW = W_LEFT - PAD * 2f - 118f;
 
             TMP_InputField nameInput = VTTLayout.InputFieldFixed(itemRT, textX, 0f, textW, itemH, VTTLayout.F_PANEL, isActive ? VTTLayout.C_TEXT_PANEL : VTTLayout.C_TEXT_DIM, isActive ? FontStyles.Bold : FontStyles.Normal, layer.name);
             string currentId = layer.id;
@@ -341,7 +369,7 @@ public class GMUIController : MonoBehaviour
             nameInput.onSelect.AddListener((text) => { if (!isActive) LayerManager.Instance.SetActiveLayer(currentId); });
 
             float btnSz = 24f; float btnY = -(itemH - btnSz) * 0.5f;
-            VTTLayout.BtnFixed(itemRT, W_LEFT - PAD * 2f - btnSz - 4f, btnY, btnSz, btnSz, "X", VTTLayout.C_BTN_CLOSE, VTTLayout.C_BDR_CLOSE, VTTLayout.C_TEXT, 11f, true).onClick.AddListener(() => LayerManager.Instance.RemoveLayer(layer.id));
+            VTTLayout.BtnFixed(itemRT, W_LEFT - PAD * 2f - btnSz - 4f, btnY, btnSz, btnSz, "X", VTTLayout.C_BTN_CLOSE, VTTLayout.C_BDR_CLOSE, VTTLayout.C_TEXT, 11f, true).onClick.AddListener(() => UIConfirmDialog.Show("Excluir camada", "Remove a camada do mapa atual. Esta acao nao pode ser desfeita.", () => LayerManager.Instance.RemoveLayer(layer.id)));
             VTTLayout.BtnFixed(itemRT, W_LEFT - PAD * 2f - (btnSz * 2) - 8f, btnY, btnSz, btnSz, "v", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT_DIM, 12f).onClick.AddListener(() => LayerManager.Instance.MoveLayerDown(layer.id));
             VTTLayout.BtnFixed(itemRT, W_LEFT - PAD * 2f - (btnSz * 3) - 10f, btnY, btnSz, btnSz, "^", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT_DIM, 12f).onClick.AddListener(() => LayerManager.Instance.MoveLayerUp(layer.id));
 
@@ -366,6 +394,7 @@ public class GMUIController : MonoBehaviour
         VTTLayout.BtnFixed(p, PAD, y, hw, BH - 4f, "CENTRALIZAR", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, VTTLayout.F_BTN).onClick.AddListener(() => MapEvents.FireCenterMapRequested());
         VTTLayout.BtnFixed(p, PAD + hw + GAP, y, hw, BH - 4f, "RESET ZOOM", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, VTTLayout.F_BTN).onClick.AddListener(() => { MapEvents.FireResetZoomRequested(); if (cameraController != null) cameraController.FocusOnActiveBoard(); });
         return y - (BH - 4f) - SGAP;
+
     }
 
     private float DrawDiceSection(RectTransform p, float y)
@@ -410,8 +439,8 @@ public class GMUIController : MonoBehaviour
         VTTLayout.BtnFixed(p, PAD + smW + GAP + cntW + GAP, y, smW, bh2, "+", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, 14f).onClick.AddListener(() => { if (fogController != null) fogController.IncreaseBrush(5); RefreshBrushLabel(); });
         y -= bh2 + GAP;
 
-        VTTLayout.BtnFixed(p, PAD, y, hw, BH - 4f, "REVELAR TUDO", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT_WARN, VTTLayout.F_BTN, false).onClick.AddListener(() => { if (fogController != null) fogController.ClearAll(); });
-        VTTLayout.BtnFixed(p, PAD + hw + GAP, y, hw, BH - 4f, "OCULTAR TUDO", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, VTTLayout.F_BTN, false).onClick.AddListener(() => { if (fogController != null) fogController.FillAll(); });
+        VTTLayout.BtnFixed(p, PAD, y, hw, BH - 4f, "REVELAR TUDO", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT_WARN, VTTLayout.F_BTN, false).onClick.AddListener(() => { if (fogController != null) UIConfirmDialog.Show("Revelar nevoa", "Isto revela toda a nevoa do mapa ativo.", () => fogController.ClearAll()); });
+        VTTLayout.BtnFixed(p, PAD + hw + GAP, y, hw, BH - 4f, "OCULTAR TUDO", VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, VTTLayout.C_TEXT, VTTLayout.F_BTN, false).onClick.AddListener(() => { if (fogController != null) UIConfirmDialog.Show("Ocultar nevoa", "Isto cobre novamente toda a nevoa do mapa ativo.", () => fogController.FillAll()); });
         y -= (BH - 4f) + GAP;
 
         fogStatusText = VTTLayout.Label(p, y, 14f, VTTLayout.F_SMALL, VTTLayout.C_TEXT_DIM);

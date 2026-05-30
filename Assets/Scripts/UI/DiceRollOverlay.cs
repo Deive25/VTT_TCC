@@ -44,16 +44,17 @@ public class DiceRollOverlay : MonoBehaviour
     private TMP_Text _resultBreakdown;
     private TMP_Text _resultTotal;
     private TMP_Text _historyText;
+    private RectTransform _cardRT;
 
     // --- Paleta (local, sem deps externas) -------------------
     private static Color CP(float r, float g, float b, float a = 1f) { return new Color(r, g, b, a); }
 
-    private static readonly Color COL_OVERLAY = CP(0.03f, 0.04f, 0.07f, 0.92f);
-    private static readonly Color COL_CARD = CP(0.10f, 0.12f, 0.17f, 1.00f);
-    private static readonly Color COL_HDR = CP(0.14f, 0.19f, 0.28f, 1.00f);
+    private static readonly Color COL_OVERLAY = CP(0.025f, 0.020f, 0.018f, 0.90f);
+    private static readonly Color COL_CARD = CP(0.13f, 0.105f, 0.075f, 1.00f);
+    private static readonly Color COL_HDR = CP(0.24f, 0.16f, 0.08f, 1.00f);
     private static readonly Color COL_SEC_BG = CP(0.08f, 0.10f, 0.14f, 1.00f);
     private static readonly Color COL_CONTENT = CP(0.06f, 0.07f, 0.10f, 1.00f);
-    private static readonly Color COL_ACCENT = CP(0.24f, 0.42f, 0.65f, 1.00f);
+    private static readonly Color COL_ACCENT = CP(0.82f, 0.55f, 0.20f, 1.00f);
     private static readonly Color COL_BTN_PRI = CP(0.18f, 0.34f, 0.56f, 1.00f);
     private static readonly Color COL_BTN_SEC = CP(0.14f, 0.17f, 0.23f, 1.00f);
     private static readonly Color COL_BTN_CLR = CP(0.20f, 0.20f, 0.26f, 1.00f);
@@ -93,8 +94,7 @@ public class DiceRollOverlay : MonoBehaviour
 
     private void Build()
     {
-        Canvas cv = GetComponent<Canvas>();
-        if (cv == null) cv = FindAnyObjectByType<Canvas>();
+        Canvas cv = VTTLayout.GetOverlayCanvas("VTT_MainOverlayCanvas", 14000);
 
         // --- Overlay (bloqueia cliques no mapa) --------------
         _panel = MakeGO("DicePanel", cv.transform);
@@ -109,21 +109,22 @@ public class DiceRollOverlay : MonoBehaviour
         // --- Card central ------------------------------------
         GameObject card = MakeGO("Card", _panel.transform);
         RectTransform cardRT = card.AddComponent<RectTransform>();
+        _cardRT = cardRT;
         cardRT.anchorMin = new Vector2(0.5f, 0.5f);
         cardRT.anchorMax = new Vector2(0.5f, 0.5f);
         cardRT.pivot = new Vector2(0.5f, 0.5f);
         cardRT.anchoredPosition = Vector2.zero;
-        cardRT.sizeDelta = new Vector2(400f, 520f);
+        cardRT.sizeDelta = new Vector2(460f, 560f);
         MakeDeco(card, COL_CARD);
 
         // Monta o conteudo de cima para baixo
         float y = 0f;
-        float cw = 400f;
+        float cw = 460f;
         float pad = 14f;
         float gap = 6f;
 
         y = BuildHeader(cardRT, y, cw, pad, gap);
-        y = BuildSecHdr(cardRT, y, "CONFIGURAR DADOS");
+        y = BuildSecHdr(cardRT, y, "ESCOLHA OS DADOS");
         y -= 4f;
         y = BuildDiceGrid(cardRT, y, cw, pad, gap);
         y -= 8f;
@@ -173,8 +174,8 @@ public class DiceRollOverlay : MonoBehaviour
         titleRT.anchoredPosition = new Vector2(pad + 5f, y);
         // Altura Positiva
         titleRT.sizeDelta = new Vector2(-(pad * 2f + closeSz + gap), h);
-        title.text = "ROLAGEM DE DADOS";
-        title.fontSize = 12f;
+        title.text = "ORACULO DOS DADOS";
+        title.fontSize = 15f;
         title.fontStyle = FontStyles.Bold;
         title.color = COL_TEXT;
         title.alignment = TextAlignmentOptions.MidlineLeft;
@@ -241,7 +242,7 @@ public class DiceRollOverlay : MonoBehaviour
         float inner = cw - pad * 2f;
         float colGap = 6f;
         float cellW = (inner - colGap) * 0.5f;
-        float cellH = 28f;
+        float cellH = 32f;
         float rowGap = 5f;
         int cols = 2;
         int rows = (DICE_TYPES.Length + cols - 1) / cols;
@@ -372,7 +373,7 @@ public class DiceRollOverlay : MonoBehaviour
     private float BuildResultArea(RectTransform parent, float y,
         float cw, float pad)
     {
-        float boxH = 44f;
+        float boxH = 52f;
 
         GameObject box = MakeGO("ResultBox", parent);
         RectTransform boxRT = box.AddComponent<RectTransform>();
@@ -397,7 +398,7 @@ public class DiceRollOverlay : MonoBehaviour
         // Breakdown (dados individuais)
         _resultBreakdown = MakeStretchLabel("Breakdown", boxRT,
             new Vector2(pad, 5f), new Vector2(-4f, -5f));
-        _resultBreakdown.fontSize = 10f;
+        _resultBreakdown.fontSize = 11.5f;
         _resultBreakdown.color = COL_DIM;
         _resultBreakdown.text = "--";
         _resultBreakdown.alignment = TextAlignmentOptions.MidlineLeft;
@@ -413,7 +414,7 @@ public class DiceRollOverlay : MonoBehaviour
         totalRT.anchoredPosition = new Vector2(0f, y);
         // Altura Positiva
         totalRT.sizeDelta = new Vector2(0f, 22f);
-        _resultTotal.fontSize = 14f;
+        _resultTotal.fontSize = 20f;
         _resultTotal.fontStyle = FontStyles.Bold;
         _resultTotal.color = COL_GOLD;
         _resultTotal.text = "";
@@ -428,7 +429,7 @@ public class DiceRollOverlay : MonoBehaviour
     private void BuildHistoryArea(RectTransform parent, float y,
         float cw, float pad)
     {
-        float boxH = 76f;
+        float boxH = 92f;
 
         GameObject box = MakeGO("HistBox", parent);
         RectTransform boxRT = box.AddComponent<RectTransform>();
@@ -451,7 +452,7 @@ public class DiceRollOverlay : MonoBehaviour
 
         _historyText = MakeStretchLabel("HistText", boxRT,
             new Vector2(pad, 5f), new Vector2(-4f, -5f));
-        _historyText.fontSize = 9.5f;
+        _historyText.fontSize = 10.5f;
         _historyText.color = COL_DIM;
         _historyText.text = "Nenhuma rolagem ainda";
         _historyText.lineSpacing = 5f;
@@ -545,7 +546,7 @@ public class DiceRollOverlay : MonoBehaviour
             if (i < rollSides.Count - 1) brkSB.Append("  ");
         }
         _resultBreakdown.text = brkSB.ToString();
-        _resultTotal.text = "TOTAL:  " + total;
+        _resultTotal.text = "TOTAL  " + total;
 
         // Registro no historico
         History.Insert(0, new RollEntry { descriptor = descriptor, total = total });
@@ -578,9 +579,22 @@ public class DiceRollOverlay : MonoBehaviour
     // API Publica
     // =========================================================
 
+
+    private void FitCardToScreen()
+    {
+        if (_cardRT == null || _panel == null) return;
+
+        RectTransform panelRT = _panel.GetComponent<RectTransform>();
+        float w = panelRT.rect.width > 0f ? panelRT.rect.width : Screen.width;
+        float h = panelRT.rect.height > 0f ? panelRT.rect.height : Screen.height;
+        float scale = Mathf.Min(1f, (w - 48f) / 460f, (h - 48f) / 560f);
+        _cardRT.localScale = Vector3.one * Mathf.Clamp(scale, 0.68f, 1f);
+        _cardRT.anchoredPosition = Vector2.zero;
+    }
     public void OpenPanel()
     {
         _panel.SetActive(true);
+        FitCardToScreen();
         _panel.transform.SetAsLastSibling();
     }
 

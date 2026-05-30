@@ -1,4 +1,4 @@
-ï»¿using UnityEngine;
+using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using TMPro;
@@ -14,7 +14,7 @@ public enum VTTMode
 public class PlayerDisplaySystem : MonoBehaviour
 {
     public static PlayerDisplaySystem Instance { get; private set; }
-    [Header("Modo de OperaÃ§Ã£o")]
+    [Header("Modo de Operação")]
     public VTTMode currentMode = VTTMode.Digital_Sync;
 
     public Camera playerCam;
@@ -23,8 +23,9 @@ public class PlayerDisplaySystem : MonoBehaviour
     private RectTransform windowRT;
     private GameObject viewCont;
 
-    // --- SISTEMA DE OPÃ‡Ã•ES OTIMIZADO (SISTEMA DE 2 BOTÃ•ES) ---
+    // --- SISTEMA DE OPÇÕES OTIMIZADO (SISTEMA DE 2 BOTÕES) ---
     private GameObject optionsWindow;
+    private RectTransform optionsWindowRT;
     private bool isFullscreenPref = false;
     private TMP_Text telaBtnText;
     private TMP_Text modoBtnText;
@@ -36,6 +37,8 @@ public class PlayerDisplaySystem : MonoBehaviour
     public bool showDiceRolls = false;
 
     private Vector2 dragOffset;
+    private Vector2 resizeStartMouse;
+    private Vector2 resizeStartSize;
     private bool isMinimized = false;
     private bool isMaximized = false;
     private Vector2 savedSize = new Vector2(960f, 580f);
@@ -48,7 +51,7 @@ public class PlayerDisplaySystem : MonoBehaviour
         if (Instance == null) Instance = this;
         else { Destroy(gameObject); return; }
 
-        // Inicia forÃ§ando o Modo Janela nativo do Windows
+        // Inicia forçando o Modo Janela nativo do Windows
         SetFullscreenMode(false);
     }
 
@@ -59,7 +62,7 @@ public class PlayerDisplaySystem : MonoBehaviour
 
     private void Update()
     {
-        // Abre e fecha o Menu de OpÃ§Ãµes apertando ESC
+        // Abre e fecha o Menu de Opções apertando ESC
         if (Input.GetKeyDown(KeyCode.Escape))
         {
             if (optionsWindow != null)
@@ -67,6 +70,7 @@ public class PlayerDisplaySystem : MonoBehaviour
                 optionsWindow.SetActive(!optionsWindow.activeSelf);
                 if (optionsWindow.activeSelf)
                 {
+                    FitOptionsWindowToScreen();
                     optionsWindow.transform.SetAsLastSibling();
                     UpdateOptionsUI(); // Garante que o texto abre atualizado
                 }
@@ -118,11 +122,11 @@ public class PlayerDisplaySystem : MonoBehaviour
         textGO.layer = 0;
         textGO.transform.SetParent(canvasGO.transform, false);
         diceText = textGO.AddComponent<TextMeshProUGUI>();
-        diceText.fontSize = 80;
+        diceText.fontSize = 92;
         diceText.color = Color.clear;
         diceText.alignment = TextAlignmentOptions.Center;
         diceText.fontStyle = FontStyles.Bold;
-        diceText.outlineWidth = 0.2f;
+        diceText.outlineWidth = 0.28f;
         diceText.outlineColor = new Color32(0, 0, 0, 255);
 
         RectTransform rt = diceText.rectTransform;
@@ -136,7 +140,7 @@ public class PlayerDisplaySystem : MonoBehaviour
     }
 
     // ==========================================
-    // NOVO MENU DE CONFIGURAÃ‡Ã•ES (APENAS 2 BOTÃ•ES)
+    // NOVO MENU DE CONFIGURAÇÕES (APENAS 2 BOTÕES)
     // ==========================================
     private void BuildOptionsWindow()
     {
@@ -146,6 +150,7 @@ public class PlayerDisplaySystem : MonoBehaviour
 
         optionsWindow = new GameObject("OptionsMenuWindow");
         RectTransform winRT = optionsWindow.AddComponent<RectTransform>();
+        optionsWindowRT = winRT;
         winRT.SetParent(cv.transform, false);
         winRT.sizeDelta = new Vector2(340f, 220f); // Menu mais compacto e limpo
         winRT.anchorMin = new Vector2(0.5f, 0.5f); winRT.anchorMax = new Vector2(0.5f, 0.5f);
@@ -163,26 +168,27 @@ public class PlayerDisplaySystem : MonoBehaviour
         titleRT.anchoredPosition = new Vector2(0, -20f);
         titleRT.sizeDelta = new Vector2(0, 30f);
         TMP_Text titleTxt = titleGO.AddComponent<TextMeshProUGUI>();
-        titleTxt.text = "PAINEL DE CONFIGURAÃ‡Ã•ES";
+        titleTxt.text = "PAINEL DE CONFIGURAÇÕES";
         titleTxt.alignment = TextAlignmentOptions.Center;
         titleTxt.fontSize = 16;
         titleTxt.fontStyle = FontStyles.Bold;
         titleTxt.color = Color.white;
 
-        // BOTÃƒO 1: Alternador de Janela / Tela Cheia
+        // BOTÃO 1: Alternador de Janela / Tela Cheia
         Button btnTela = BuildOptionBtn(winRT, "TELA: ...", new Vector2(0, 35f), out telaBtnText);
         btnTela.onClick.AddListener(() => {
             SetFullscreenMode(!isFullscreenPref);
         });
 
-        // BOTÃƒO 2: Alternador de Modo Digital / Mesa FÃ­sica
+        // BOTÃO 2: Alternador de Modo Digital / Mesa Física
         Button btnModo = BuildOptionBtn(winRT, "MODO: ...", new Vector2(0, -25f), out modoBtnText);
         btnModo.onClick.AddListener(() => {
             VTTMode proximoModo = (currentMode == VTTMode.Digital_Sync) ? VTTMode.Physical_Table : VTTMode.Digital_Sync;
-            SetVTTMode(proximoModo);
+            string msg = proximoModo == VTTMode.Physical_Table ? "Entrar no modo fisico vai limpar rastreamento/calibracao anteriores e exigir nova calibracao." : "Voltar ao modo digital preserva os tokens no mapa, mas desativa o vinculo fisico atual.";
+            UIConfirmDialog.Show("Trocar modo do VTT", msg, () => SetVTTMode(proximoModo));
         });
 
-        // RodapÃ© informativo
+        // Rodapé informativo
         GameObject footerGO = new GameObject("FooterHelp");
         RectTransform footerRT = footerGO.AddComponent<RectTransform>();
         footerRT.SetParent(winRT, false);
@@ -197,9 +203,22 @@ public class PlayerDisplaySystem : MonoBehaviour
         footerTxt.color = new Color(0.6f, 0.6f, 0.6f);
 
         UpdateOptionsUI();
+        FitOptionsWindowToScreen();
         optionsWindow.SetActive(false);
     }
 
+
+    private void FitOptionsWindowToScreen()
+    {
+        if (optionsWindowRT == null) return;
+        Canvas canvas = optionsWindowRT.GetComponentInParent<Canvas>();
+        RectTransform canvasRT = canvas != null ? canvas.GetComponent<RectTransform>() : null;
+        float w = canvasRT != null && canvasRT.rect.width > 0f ? canvasRT.rect.width : Screen.width;
+        float h = canvasRT != null && canvasRT.rect.height > 0f ? canvasRT.rect.height : Screen.height;
+        float scale = Mathf.Min(1f, (w - 48f) / 340f, (h - 48f) / 220f);
+        optionsWindowRT.localScale = Vector3.one * Mathf.Clamp(scale, 0.76f, 1f);
+        optionsWindowRT.anchoredPosition = Vector2.zero;
+    }
     private Button BuildOptionBtn(RectTransform parent, string defaultText, Vector2 pos, out TMP_Text textComponent)
     {
         GameObject go = new GameObject("Btn_Setting");
@@ -226,23 +245,23 @@ public class PlayerDisplaySystem : MonoBehaviour
         textComponent.alignment = TextAlignmentOptions.Center;
         textComponent.fontStyle = FontStyles.Bold;
 
-        // Adiciona feedback visual de botÃ£o do VTT
+        // Adiciona feedback visual de botão do VTT
         go.AddComponent<ButtonFeedback>();
 
         return go.AddComponent<Button>();
     }
 
-    // Atualiza o texto dos botÃµes baseado no estado real do software
+    // Atualiza o texto dos botões baseado no estado real do software
     private void UpdateOptionsUI()
     {
         if (telaBtnText != null)
         {
-            telaBtnText.text = isFullscreenPref ? "TELA: TELA CHEIA (MAXIMIZADO)" : "TELA: MODO JANELA (PADRÃƒO)";
+            telaBtnText.text = isFullscreenPref ? "TELA: TELA CHEIA (MAXIMIZADO)" : "TELA: MODO JANELA (PADRÃO)";
         }
 
         if (modoBtnText != null)
         {
-            modoBtnText.text = (currentMode == VTTMode.Digital_Sync) ? "MODO DO SISTEMA: DIGITAL SYNC" : "MODO DO SISTEMA: MESA FÃSICA (KINECT)";
+            modoBtnText.text = (currentMode == VTTMode.Digital_Sync) ? "MODO DO SISTEMA: DIGITAL SYNC" : "MODO DO SISTEMA: MESA FÍSICA (KINECT)";
         }
     }
 
@@ -251,27 +270,54 @@ public class PlayerDisplaySystem : MonoBehaviour
         isFullscreenPref = fullscreen;
         if (fullscreen)
         {
-            // Maximiza completamente sem barras
             Screen.SetResolution(Screen.currentResolution.width, Screen.currentResolution.height, FullScreenMode.FullScreenWindow);
         }
         else
         {
-            // ForÃ§a o Modo Janela padrÃ£o do Windows estruturado com bordas nativas manipulÃ¡veis
             Screen.fullScreenMode = FullScreenMode.Windowed;
-            Screen.SetResolution(1280, 720, false);
+            if (Screen.width > 1920 || Screen.height > 1080 || Screen.width < 900 || Screen.height < 600)
+                Screen.SetResolution(1280, 720, false);
         }
+        UpdateOptionsUI();
+    }
+
+    public void RestoreMainWindowMode()
+    {
+        isFullscreenPref = false;
+        Screen.fullScreenMode = FullScreenMode.Windowed;
+        if (Screen.width > 1920 || Screen.height > 1080 || Screen.width < 900 || Screen.height < 600)
+            Screen.SetResolution(1280, 720, false);
         UpdateOptionsUI();
     }
 
     public void SetVTTMode(VTTMode newMode)
     {
+        if (currentMode == newMode)
+        {
+            UpdateOptionsUI();
+            return;
+        }
+
+        VTTMode previousMode = currentMode;
         currentMode = newMode;
+
+        if (newMode == VTTMode.Physical_Table)
+        {
+            if (KinectManager.Instance != null) KinectManager.Instance.PrepareForPhysicalMode();
+            isLinkedToGM = false;
+            FocusFullMap();
+        }
+        else if (previousMode == VTTMode.Physical_Table)
+        {
+            if (KinectManager.Instance != null) KinectManager.Instance.ReleasePhysicalTrackingPreserveTokens();
+        }
+
         Debug.Log("VTT Mode alterado de forma centralizada para: " + newMode.ToString());
         UpdateOptionsUI();
     }
 
     // ==========================================
-    // JANELA DE VISÃƒO FLUTUANTE E PROJEÃ‡ÃƒO
+    // JANELA DE VISÃO FLUTUANTE E PROJEÇÃO
     // ==========================================
     private void BuildFloatingWindow()
     {
@@ -303,7 +349,7 @@ public class PlayerDisplaySystem : MonoBehaviour
         hdrImg.raycastTarget = true;
 
         TMP_Text titleTxt = VTTLayout.LabelFixed(hdrRT, 15f, 0, 400f, 40f, 14f, VTTLayout.C_TEXT_PANEL, FontStyles.Bold, TextAlignmentOptions.MidlineLeft);
-        titleTxt.text = "VISÃƒO DOS JOGADORES (CAPTURA)";
+        titleTxt.text = "VISÃO DOS JOGADORES (CAPTURA)";
         RectTransform titleRT = titleTxt.GetComponent<RectTransform>();
         titleRT.anchorMin = new Vector2(0, 0.5f); titleRT.anchorMax = new Vector2(0, 0.5f);
         titleRT.pivot = new Vector2(0, 0.5f);
@@ -325,6 +371,7 @@ public class PlayerDisplaySystem : MonoBehaviour
             if (RectTransformUtility.ScreenPointToLocalPointInRectangle(windowRT.parent as RectTransform, ped.position, ped.pressEventCamera, out Vector2 localMousePos))
             {
                 windowRT.localPosition = localMousePos - dragOffset;
+                FitFloatingWindowToCanvas();
             }
         });
         trigger.triggers.Add(entryDrag);
@@ -332,7 +379,7 @@ public class PlayerDisplaySystem : MonoBehaviour
         Button btnClose = BuildWinControlBtn(hdrRT, "X", VTTLayout.C_BTN_CLOSE, 0f);
         btnClose.onClick.AddListener(CloseWindow);
 
-        Button btnMax = BuildWinControlBtn(hdrRT, "â–¡", VTTLayout.C_BTN_SEC, -40f);
+        Button btnMax = BuildWinControlBtn(hdrRT, "?", VTTLayout.C_BTN_SEC, -40f);
         btnMax.onClick.AddListener(ToggleMaximize);
 
         Button btnMin = BuildWinControlBtn(hdrRT, "_", VTTLayout.C_BTN_SEC, -80f);
@@ -357,9 +404,50 @@ public class PlayerDisplaySystem : MonoBehaviour
         arf.aspectMode = AspectRatioFitter.AspectMode.FitInParent;
         arf.aspectRatio = 1920f / 1080f;
 
+        BuildResizeHandle(windowRT);
+
         floatingWindow.SetActive(false);
     }
 
+
+    private void BuildResizeHandle(RectTransform parent)
+    {
+        GameObject handle = new GameObject("ResizeHandle");
+        RectTransform handleRT = handle.AddComponent<RectTransform>();
+        handleRT.SetParent(parent, false);
+        handleRT.anchorMin = new Vector2(1f, 0f);
+        handleRT.anchorMax = new Vector2(1f, 0f);
+        handleRT.pivot = new Vector2(1f, 0f);
+        handleRT.anchoredPosition = new Vector2(-5f, 5f);
+        handleRT.sizeDelta = new Vector2(26f, 26f);
+
+        Image img = handle.AddComponent<Image>();
+        img.color = new Color(0.82f, 0.72f, 0.48f, 0.45f);
+        img.raycastTarget = true;
+
+        EventTrigger trigger = handle.AddComponent<EventTrigger>();
+        EventTrigger.Entry down = new EventTrigger.Entry { eventID = EventTriggerType.PointerDown };
+        down.callback.AddListener((data) => {
+            PointerEventData ped = (PointerEventData)data;
+            resizeStartMouse = ped.position;
+            resizeStartSize = windowRT.sizeDelta;
+            floatingWindow.transform.SetAsLastSibling();
+        });
+        trigger.triggers.Add(down);
+
+        EventTrigger.Entry drag = new EventTrigger.Entry { eventID = EventTriggerType.Drag };
+        drag.callback.AddListener((data) => {
+            if (isMaximized || isMinimized) return;
+            PointerEventData ped = (PointerEventData)data;
+            Vector2 delta = ped.position - resizeStartMouse;
+            float newW = Mathf.Clamp(resizeStartSize.x + delta.x, 520f, 1600f);
+            float newH = Mathf.Clamp(resizeStartSize.y - delta.y, 340f, 1000f);
+            windowRT.sizeDelta = new Vector2(newW, newH);
+            savedSize = windowRT.sizeDelta;
+            FitFloatingWindowToCanvas();
+        });
+        trigger.triggers.Add(drag);
+    }
     private Button BuildWinControlBtn(RectTransform parent, string text, Color bgColor, float rightOffset)
     {
         GameObject go = new GameObject("WinBtn_" + text);
@@ -430,10 +518,38 @@ public class PlayerDisplaySystem : MonoBehaviour
         }
     }
 
+
+    private void FitFloatingWindowToCanvas()
+    {
+        if (floatingWindow == null || windowRT == null) return;
+        Canvas canvas = floatingWindow.GetComponentInParent<Canvas>();
+        if (canvas == null) return;
+
+        RectTransform canvasRT = canvas.GetComponent<RectTransform>();
+        Vector2 canvasSize = canvasRT.rect.size;
+        float maxW = Mathf.Max(520f, canvasSize.x - 48f);
+        float maxH = Mathf.Max(340f, canvasSize.y - 48f);
+        windowRT.sizeDelta = new Vector2(Mathf.Clamp(windowRT.sizeDelta.x, 520f, maxW), Mathf.Clamp(windowRT.sizeDelta.y, 340f, maxH));
+
+        float halfW = windowRT.sizeDelta.x * 0.5f;
+        float halfH = windowRT.sizeDelta.y * 0.5f;
+        float minX = -canvasSize.x * 0.5f + halfW + 12f;
+        float maxX = canvasSize.x * 0.5f - halfW - 12f;
+        float minY = -canvasSize.y * 0.5f + halfH + 12f;
+        float maxY = canvasSize.y * 0.5f - halfH - 12f;
+
+        if (maxX >= minX && maxY >= minY)
+            windowRT.anchoredPosition = new Vector2(Mathf.Clamp(windowRT.anchoredPosition.x, minX, maxX), Mathf.Clamp(windowRT.anchoredPosition.y, minY, maxY));
+        else
+            windowRT.anchoredPosition = Vector2.zero;
+    }
     public void OpenWindow()
     {
+        playerCam.targetDisplay = 0;
         playerCam.targetTexture = playerViewTex;
+        RestoreMainWindowMode();
         floatingWindow.SetActive(true);
+        FitFloatingWindowToCanvas();
         floatingWindow.transform.SetAsLastSibling();
 
         if (!isLinkedToGM || currentMode == VTTMode.Physical_Table) FocusFullMap();
@@ -458,6 +574,7 @@ public class PlayerDisplaySystem : MonoBehaviour
     {
         if (Display.displays.Length > 1 && targetDisplayIndex < Display.displays.Length)
         {
+            RestoreMainWindowMode();
             Display.displays[targetDisplayIndex].Activate(1920, 1080, 60);
 
             playerCam.targetTexture = null;
@@ -465,12 +582,12 @@ public class PlayerDisplaySystem : MonoBehaviour
             CloseWindow();
             Debug.Log("Sinal enviado para o " + GetCurrentDisplayName());
 
-            // Executa a trava de seguranÃ§a contra o Fullscreen acidental
+            // Executa a trava de segurança contra o Fullscreen acidental
             StartCoroutine(EnforceScreenModeRoutine());
         }
         else
         {
-            Debug.LogWarning("O monitor selecionado nÃ£o estÃ¡ conectado no Windows!");
+            Debug.LogWarning("O monitor selecionado não está conectado no Windows!");
         }
     }
 
@@ -478,7 +595,7 @@ public class PlayerDisplaySystem : MonoBehaviour
     {
         yield return new WaitForSeconds(0.2f);
         // Obriga o monitor principal do mestre a respeitar o modo salvo (mantendo em janela se preferido)
-        SetFullscreenMode(isFullscreenPref);
+        RestoreMainWindowMode();
     }
 
     private void LateUpdate()
@@ -543,14 +660,14 @@ public class PlayerDisplaySystem : MonoBehaviour
     private IEnumerator AnimateDiceText(string text)
     {
         diceText.text = text;
-        diceText.color = new Color(0.9f, 0.8f, 0.2f, 1);
+        diceText.color = new Color(1.0f, 0.78f, 0.30f, 1);
         yield return new WaitForSeconds(5f);
 
         float t = 1f;
         while (t > 0)
         {
             t -= Time.deltaTime;
-            diceText.color = new Color(0.9f, 0.8f, 0.2f, t);
+            diceText.color = new Color(1.0f, 0.78f, 0.30f, t);
             yield return null;
         }
         diceText.text = "";
