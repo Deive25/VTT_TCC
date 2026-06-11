@@ -2,10 +2,22 @@ using System.Collections.Generic;
 using System.Collections;
 using UnityEngine;
 using System.Runtime.InteropServices;
+using System.Diagnostics; 
 
 public class KinectManager : MonoBehaviour
 {
     public static KinectManager Instance { get; private set; }
+
+    // ==========================================
+    // METRICAS (para build / testes de qualidade)
+    // ==========================================
+    /// <summary>Tempo (ms) gasto exclusivamente na chamada ProcessFrame() da DLL no último Update.</summary>
+    public double LastTrackingStepMs { get; private set; } = double.NaN;
+
+    /// <summary>Quantidade de peças rastreadas consideradas estáveis/ativas no último frame.</summary>
+    public int LastTrackedCount { get; private set; } = 0;
+
+    private readonly Stopwatch _processFrameStopwatch = new Stopwatch();
 
     // ==========================================
     // PONTE COM O C++ (DLL IMPORT)
@@ -139,13 +151,12 @@ public class KinectManager : MonoBehaviour
 
     void Start()
     {
-        if (InitTracker()) Debug.Log("Kinect Conectado com Sucesso!");
-        else Debug.LogError("ERRO: Kinect nao encontrado ou DLL faltando.");
+        if (InitTracker()) UnityEngine.Debug.Log("Kinect Conectado com Sucesso!");
+        else UnityEngine.Debug.LogError("ERRO: Kinect nao encontrado ou DLL faltando.");
 
         LoadCalibration();
         ApplyProjectionROIToTracker();
     }
-
 
     public void PrepareForPhysicalMode()
     {
@@ -198,12 +209,13 @@ public class KinectManager : MonoBehaviour
 
         currentCalibStep = startNewCalibration ? CalibStep.TopLeft : CalibStep.None;
         UpdateCalibVisual();
-        Debug.Log("[KinectManager] Calibracao invalidada: " + reason + ". Nova calibracao necessaria antes do rastreamento fisico.");
+        UnityEngine.Debug.Log("[KinectManager] Calibracao invalidada: " + reason + ". Nova calibracao necessaria antes do rastreamento fisico.");
     }
+
     public void StartBinding(TokenController token)
     {
         pendingBindingToken = token;
-        Debug.Log("VINCULACAO: Coloque a miniatura fisica na mesa agora.");
+        UnityEngine.Debug.Log("VINCULACAO: Coloque a miniatura fisica na mesa agora.");
     }
 
     void Update()
@@ -214,7 +226,7 @@ public class KinectManager : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.C))
         {
             InvalidateCalibration("atalho manual de calibracao", true);
-            Debug.Log("CALIBRACAO: Coloque uma peca no ALVO VERMELHO.");
+            UnityEngine.Debug.Log("CALIBRACAO: Coloque uma peca no ALVO VERMELHO.");
         }
 
         if (PlayerDisplaySystem.Instance != null && PlayerDisplaySystem.Instance.currentMode != VTTMode.Physical_Table)
@@ -223,7 +235,14 @@ public class KinectManager : MonoBehaviour
         if (!IsCalibrationValid && currentCalibStep == CalibStep.None)
             return;
 
+        // ==========================
+        // MEDIÇÃO: tempo da DLL ProcessFrame()
+        // ==========================
+        _processFrameStopwatch.Restart();
         ProcessFrame();
+        _processFrameStopwatch.Stop();
+        LastTrackingStepMs = _processFrameStopwatch.Elapsed.TotalMilliseconds;
+
         int count = GetPieceCount();
 
         if (currentCalibStep != CalibStep.None && Input.GetKeyDown(KeyCode.Space) && !isCapturingCalibrationPoint)
@@ -380,6 +399,11 @@ public class KinectManager : MonoBehaviour
         foreach (int id in idsToRemove) boundTokens.Remove(id);
         CleanupPieceStates();
         lastStablePieceCount = idsThisFrame.Count;
+
+        // ==========================
+        // MÉTRICA: peças rastreadas no frame
+        // ==========================
+        LastTrackedCount = lastStablePieceCount;
     }
 
     private PieceState GetOrCreatePieceState(int id)
@@ -485,6 +509,10 @@ public class KinectManager : MonoBehaviour
         frameDetections.Clear();
         pendingBindingToken = null;
         lastStablePieceCount = 0;
+
+        // métricas
+        LastTrackedCount = 0;
+        LastTrackingStepMs = double.NaN;
     }
 
     private void UpdateCalibVisual()
@@ -569,7 +597,7 @@ public class KinectManager : MonoBehaviour
         else
         {
             kinectBlinkWarning = true;
-            Debug.LogWarning("CALIBRACAO: nenhum frame valido capturado. Deixe apenas uma peca no alvo vermelho e tente novamente.");
+            UnityEngine.Debug.LogWarning("CALIBRACAO: nenhum frame valido capturado. Deixe apenas uma peca no alvo vermelho e tente novamente.");
         }
 
         isCapturingCalibrationPoint = false;
@@ -585,7 +613,7 @@ public class KinectManager : MonoBehaviour
 
         if (requireSinglePieceForCornerCalibration && count != 1)
         {
-            Debug.LogWarning($"CALIBRACAO: {count} pecas detectadas. Remova objetos extras para nao calibrar pelo centroide errado.");
+            UnityEngine.Debug.LogWarning($"CALIBRACAO: {count} pecas detectadas. Remova objetos extras para nao calibrar pelo centroide errado.");
             return false;
         }
 
@@ -658,7 +686,7 @@ public class KinectManager : MonoBehaviour
         }
         catch (System.EntryPointNotFoundException)
         {
-            Debug.LogWarning("[KinectManager] DLL atual ainda nao possui SetProjectionROI. Recompile a DLL para ativar a ROI nativa.");
+            UnityEngine.Debug.LogWarning("[KinectManager] DLL atual ainda nao possui SetProjectionROI. Recompile a DLL para ativar a ROI nativa.");
         }
     }
 
@@ -670,7 +698,7 @@ public class KinectManager : MonoBehaviour
         }
         catch (System.EntryPointNotFoundException)
         {
-            Debug.LogWarning("[KinectManager] DLL atual ainda nao possui ClearProjectionROI. Recompile a DLL para ativar a ROI nativa.");
+            UnityEngine.Debug.LogWarning("[KinectManager] DLL atual ainda nao possui ClearProjectionROI. Recompile a DLL para ativar a ROI nativa.");
         }
     }
 
@@ -709,7 +737,7 @@ public class KinectManager : MonoBehaviour
 
             if (best < 0.000001)
             {
-                Debug.LogError("[KinectManager] Calibracao invalida: os 4 pontos nao formam um quadrilatero utilizavel.");
+                UnityEngine.Debug.LogError("[KinectManager] Calibracao invalida: os 4 pontos nao formam um quadrilatero utilizavel.");
                 return null;
             }
 
@@ -776,11 +804,10 @@ public class KinectManager : MonoBehaviour
             GUI.Label(new Rect(Screen.width / 2 - 150, 20, 300, 30), "AGUARDANDO MINIATURA FISICA NA MESA...");
         }
 
-
         if (PlayerDisplaySystem.Instance != null && PlayerDisplaySystem.Instance.currentMode == VTTMode.Physical_Table && !IsCalibrationValid && currentCalibStep == CalibStep.None)
         {
             GUI.color = Color.yellow;
-            GUI.Box(new Rect(Screen.width / 2 - 280, 70, 560, 38), "RASTREAMENTO FISICO PAUSADO: recalibre para o mapa atual (tecla C)." );
+            GUI.Box(new Rect(Screen.width / 2 - 280, 70, 560, 38), "RASTREAMENTO FISICO PAUSADO: recalibre para o mapa atual (tecla C).");
         }
         if (currentCalibStep != CalibStep.None)
         {
@@ -798,7 +825,7 @@ public class KinectManager : MonoBehaviour
         {
             GUI.color = lastPointInsideProjection ? Color.green : Color.red;
             GUI.Box(
-                new Rect(20, Screen.height - 170, 500, 145),
+                new Rect(20, Screen.height - 190, 500, 165),
                 "KINECT DEBUG\n" +
                 $"Raw px: {lastRawKinectPixel.x:F0}, {lastRawKinectPixel.y:F0}\n" +
                 $"Proj 0..1: {lastProjectionNormalized.x:F3}, {lastProjectionNormalized.y:F3}\n" +
@@ -806,6 +833,7 @@ public class KinectManager : MonoBehaviour
                 $"ROI: {(lastPointInsideProjection ? "DENTRO" : "FORA")}  margem={roiMargin:F2}\n" +
                 $"Estaveis: {lastStablePieceCount}  diametro peca={physicalPieceDiameterCm:F1}cm\n" +
                 $"Filtro: confirma={framesToConfirmNewPiece}  perdido={framesBeforeLost}  salto={maxWorldJumpPerFrame:F1}\n" +
+                $"ProcessFrame: {(double.IsNaN(LastTrackingStepMs) ? "N/A" : LastTrackingStepMs.ToString("F2"))} ms\n" +
                 $"Amostrando canto: {(isCapturingCalibrationPoint ? "SIM" : "NAO")}");
         }
     }
