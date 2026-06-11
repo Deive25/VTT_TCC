@@ -1,0 +1,594 @@
+using UnityEngine;
+using UnityEngine.UI;
+using TMPro;
+using System.Collections.Generic;
+
+public class TokenController : MonoBehaviour
+{
+    public string charId;
+    public bool isPlaced = false;
+    public SpriteRenderer borderRenderer;
+    public bool renderInProjection = true;
+    private SpriteRenderer[] _projectionRenderers;
+
+    [Header("Kinect Tracking")]
+    public int kinectTrackingId = -1; // -1 = token digital; qualquer outro valor indica vínculo físico.
+    private Vector3 _targetKinectPos;
+
+    [Header("Sistema de Visao")]
+    public bool revealsFog = true;
+    public VisionShape visionShape = VisionShape.Circle;
+    public float visionRadius = 3f;
+    public float visionAngle = 90f;
+
+    private Vector3 _currentVelocity;
+    public float smoothTime = 0.15f;
+    public float deadzone = 0.08f;
+    private Vector3 _lastFogPos;
+
+    private Vector3 offset;
+    private Vector3 dragStartMousePos;
+    private int colorIdx = 0;
+    private Color[] palette = { Color.white, new Color(0.85f, 0.2f, 0.2f), new Color(0.2f, 0.5f, 0.9f), new Color(0.2f, 0.8f, 0.3f), new Color(0.92f, 0.78f, 0.28f), Color.black };
+
+    private MapController _mapController;
+    private FogOfWarController _fogController;
+    private Camera _mainCam;
+    private SpriteRenderer _spriteRenderer;
+
+    private void Start()
+    {
+        _mapController = FindAnyObjectByType<MapController>();
+        _fogController = FindAnyObjectByType<FogOfWarController>();
+        _mainCam = Camera.main;
+        _spriteRenderer = GetComponent<SpriteRenderer>();
+        _projectionRenderers = GetComponentsInChildren<SpriteRenderer>(true);
+        TokenSystem.RegisterActiveToken(this);
+        ApplyProjectionVisibility();
+        _lastFogPos = transform.position;
+    }
+
+
+    private void OnDestroy()
+    {
+        TokenSystem.UnregisterActiveToken(this);
+        ReleaseRuntimeSprite(GetComponent<SpriteRenderer>());
+    }
+
+    private void ReleaseRuntimeSprite(SpriteRenderer renderer)
+    {
+        if (renderer == null || renderer.sprite == null || renderer.sprite == VTTLayout.GetCircleSprite()) return;
+        Texture2D tex = renderer.sprite.texture;
+        Destroy(renderer.sprite);
+        if (tex != null) Destroy(tex);
+    }
+
+    public void SetRenderInProjection(bool render)
+    {
+        renderInProjection = render;
+
+        if (CharacterManager.Instance != null)
+        {
+            CharacterRecord record = CharacterManager.Instance.GetCharacter(charId);
+            if (record != null)
+            {
+                record.defaultRenderInProjection = render;
+                CharacterManager.Instance.SaveDatabase();
+            }
+        }
+
+        ApplyProjectionVisibility();
+    }
+
+    public void ApplyProjectionVisibility()
+    {
+        if (_projectionRenderers == null || _projectionRenderers.Length == 0)
+            _projectionRenderers = GetComponentsInChildren<SpriteRenderer>(true);
+
+        bool hiddenFromProjection = TokenSystem.HideTokensInProjection || !renderInProjection;
+        int targetLayer = hiddenFromProjection ? TokenSystem.ProjectionHiddenLayer : 0;
+        SetLayerRecursively(transform, targetLayer);
+    }
+
+    private void SetLayerRecursively(Transform root, int layer)
+    {
+        root.gameObject.layer = layer;
+        foreach (Transform child in root)
+            SetLayerRecursively(child, layer);
+    }
+    public void SetBorderColor(Color color) { if (borderRenderer != null) borderRenderer.color = color; }
+    public void CycleBorderColor() { colorIdx = (colorIdx + 1) % palette.Length; SetBorderColor(palette[colorIdx]); }
+
+    public void OnPlacedInMap()
+    {
+        isPlaced = true;
+        CircleCollider2D col = GetComponent<CircleCollider2D>();
+        if (col != null) col.enabled = true;
+
+       if (_spriteRenderer != null) _spriteRenderer.sortingOrder = 41;
+        if (borderRenderer != null) borderRenderer.sortingOrder = 40;
+
+        RevealFogIfEnabled();
+    }
+
+    public void RevealFogIfEnabled()
+    {
+       if (isPlaced && revealsFog && _fogController != null)
+        {
+           _fogController.RevealByToken(transform.position, visionRadius, visionShape, transform.up, visionAngle);
+        }
+    }
+
+    public void SetLostState(bool isLost)
+    {
+        float alpha = isLost ? 0.35f : 1f;
+        if (_spriteRenderer != null)
+        {
+            Color c = _spriteRenderer.color;
+            c.a = alpha;
+            _spriteRenderer.color = c;
+        }
+        if (borderRenderer != null)
+        {
+            Color c = borderRenderer.color;
+            c.a = alpha;
+            borderRenderer.color = c;
+        }
+    }
+
+    public void UpdatePositionFromKinect(Vector3 worldPos)
+    {
+        float distance = Vector2.Distance(worldPos, _targetKinectPos);
+
+       if (distance > deadzone)
+        {
+            _targetKinectPos = new Vector3(worldPos.x, worldPos.y, transform.position.z);
+        }
+    }
+
+    private void Update()
+    {
+        if (isPlaced && kinectTrackingId != -1)
+        {
+            // Suaviza o rastreamento físico sem perder responsividade em movimentos curtos.
+            transform.position = Vector3.SmoothDamp(transform.position, _targetKinectPos, ref _currentVelocity, smoothTime);
+
+            if (Vector3.Distance(transform.position, _lastFogPos) > 0.05f)
+            {
+                RevealFogIfEnabled();
+                _lastFogPos = transform.position;
+            }
+        }
+    }
+
+    private void OnMouseOver()
+    {
+       if (!isPlaced) return;
+
+        if (Input.GetMouseButtonDown(1))
+        {
+            if (visionShape == VisionShape.Circle)
+                visionShape = VisionShape.Square;
+            else if (visionShape == VisionShape.Square)
+                visionShape = VisionShape.Cone;
+            else
+                visionShape = VisionShape.Circle;
+            RevealFogIfEnabled();
+        }
+
+       float scroll = Input.GetAxis("Mouse ScrollWheel");
+
+        if (Mathf.Abs(scroll) > 0f && (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)))
+        {
+            float angleToRotate = scroll > 0 ? 45f : -45f;
+            transform.Rotate(0, 0, angleToRotate);
+
+            RevealFogIfEnabled();
+        }
+    }
+
+    void OnMouseDown()
+    {
+       dragStartMousePos = Input.mousePosition;
+
+        // No modo físico, o Kinect controla posição; o mouse ainda pode abrir a UI do token.
+        if (kinectTrackingId != -1 && PlayerDisplaySystem.Instance != null && PlayerDisplaySystem.Instance.currentMode == VTTMode.Physical_Table)
+            return;
+
+        offset = transform.position - _mainCam.ScreenToWorldPoint(Input.mousePosition);
+        offset.z = 0;
+    }
+
+    void OnMouseDrag()
+    {
+        if (!isPlaced) return;
+
+        // Evita conflito entre arraste manual e rastreamento físico ativo.
+        if (kinectTrackingId != -1 && PlayerDisplaySystem.Instance != null && PlayerDisplaySystem.Instance.currentMode == VTTMode.Physical_Table)
+            return;
+
+        Vector3 newPos = _mainCam.ScreenToWorldPoint(Input.mousePosition) + offset;
+        newPos.z = transform.position.z;
+
+        if (_mapController != null && _mapController.IsMapLoaded)
+        {
+            Bounds b = _mapController.MapBounds;
+            newPos.x = Mathf.Clamp(newPos.x, b.min.x, b.max.x);
+            newPos.y = Mathf.Clamp(newPos.y, b.min.y, b.max.y);
+        }
+        transform.position = newPos;
+
+       RevealFogIfEnabled();
+    }
+
+    void OnMouseUpAsButton()
+    {
+       if (Vector3.Distance(dragStartMousePos, Input.mousePosition) < 5f)
+        {
+            TokenSystem.Instance.OpenMiniUI(this);
+        }
+    }
+
+    public void FollowMouse()
+    {
+        Camera mainCam = Camera.main;
+
+        if (mainCam == null)
+        {
+            Debug.LogWarning("[TokenSystem] Camera principal nao encontrada. Verifique se ela usa a tag 'MainCamera'.");
+            return;
+        }
+
+        Vector3 mousePos = Input.mousePosition;
+
+       mousePos.z = -mainCam.transform.position.z;
+
+        Vector3 worldPos = mainCam.ScreenToWorldPoint(mousePos);
+
+       transform.position = new Vector3(worldPos.x, worldPos.y, 0f);
+    }
+
+    public bool TryPlaceInMap()
+    {
+        if (_mapController != null && _mapController.IsMapLoaded)
+        {
+            Vector3 mousePos = _mainCam.ScreenToWorldPoint(Input.mousePosition);
+            Bounds b = _mapController.MapBounds;
+
+            if (mousePos.x < b.min.x || mousePos.x > b.max.x || mousePos.y < b.min.y || mousePos.y > b.max.y)
+            {
+                Destroy(gameObject);
+                return false;
+            }
+            transform.position = new Vector3(mousePos.x, mousePos.y, -1f);
+
+            if (PlayerDisplaySystem.Instance != null && PlayerDisplaySystem.Instance.currentMode == VTTMode.Physical_Table)
+            {
+                if (KinectManager.Instance != null)
+                {
+                    KinectManager.Instance.StartBinding(this);
+                }
+                else
+                {
+                    Debug.LogError("[TokenSystem] KinectManager nao encontrado na cena.");
+                    OnPlacedInMap();
+                }
+            }
+            else
+            {
+                OnPlacedInMap();
+            }
+            return true;
+        }
+        Destroy(gameObject);
+        return false;
+    }
+}
+
+public class TokenSystem : MonoBehaviour
+{
+    public static TokenSystem Instance { get; private set; }
+
+    public const int ProjectionHiddenLayer = 1;
+    public static bool HideTokensInProjection { get; private set; }
+    public static float GlobalTokenScale = 0.31f;
+    private static readonly List<TokenController> ActiveTokens = new List<TokenController>();
+
+    private GameObject _panel;
+    private RectTransform contentRT;
+    private TokenController activeToken;
+    private TMP_Text nameLbl;
+
+
+    public static void SetHideTokensInProjection(bool hide)
+    {
+        HideTokensInProjection = hide;
+        RefreshProjectionVisibility();
+    }
+
+    public static void RegisterActiveToken(TokenController token)
+    {
+        if (token != null && !ActiveTokens.Contains(token)) ActiveTokens.Add(token);
+    }
+
+    public static void UnregisterActiveToken(TokenController token)
+    {
+        if (token != null) ActiveTokens.Remove(token);
+    }
+
+    public static void RefreshProjectionVisibility()
+    {
+        for (int i = ActiveTokens.Count - 1; i >= 0; i--)
+        {
+            if (ActiveTokens[i] == null) ActiveTokens.RemoveAt(i);
+            else ActiveTokens[i].ApplyProjectionVisibility();
+        }
+    }
+    private void Awake()
+    {
+        Instance = this;
+        BuildMiniUI();
+    }
+
+    public static TokenController SpawnToken(string charId)
+    {
+        LayerData layer = LayerManager.Instance.GetActiveLayer();
+        if (layer == null) { Debug.LogWarning("Abra um tabuleiro antes!"); return null; }
+
+        var record = CharacterManager.Instance.GetCharacter(charId);
+        if (record == null) return null;
+
+        GameObject go = new GameObject("Token_" + record.name);
+        go.transform.SetParent(layer.gameObject.transform, false);
+        go.transform.position = new Vector3(Camera.main.transform.position.x, Camera.main.transform.position.y, -5f);
+
+        go.transform.localScale = new Vector3(GlobalTokenScale, GlobalTokenScale, 1f);
+
+        SpriteRenderer avatarSR = go.AddComponent<SpriteRenderer>();
+        Texture2D tex = CharacterManager.Instance.LoadAvatar(record.avatarFileName);
+        avatarSR.sprite = VTTLayout.CreateCircularWorldSprite(tex, record.avatarCrop);
+
+        avatarSR.sortingOrder = 501;
+
+        GameObject borderGO = new GameObject("Border");
+        borderGO.transform.SetParent(go.transform, false);
+        borderGO.transform.localPosition = new Vector3(0, 0, 0.1f);
+        borderGO.transform.localScale = new Vector3(1.15f, 1.15f, 1f);
+        SpriteRenderer borderSR = borderGO.AddComponent<SpriteRenderer>();
+        borderSR.sprite = VTTLayout.GetCircleSprite();
+        borderSR.color = GetTokenTypeColor(record);
+        borderSR.sortingOrder = 500;
+
+        CircleCollider2D col = go.AddComponent<CircleCollider2D>();
+        col.enabled = false;
+
+        TokenController tc = go.AddComponent<TokenController>();
+        tc.charId = charId;
+        tc.borderRenderer = borderSR;
+        tc.renderInProjection = record.defaultRenderInProjection;
+        tc.ApplyProjectionVisibility();
+        return tc;
+    }
+
+
+    private static Color GetTokenTypeColor(CharacterRecord record)
+    {
+        if (record == null) return Color.white;
+        switch (record.characterType)
+        {
+            case CharacterType.NPC: return new Color(0.25f, 0.55f, 0.90f, 1f);
+            case CharacterType.Enemy: return new Color(0.90f, 0.22f, 0.20f, 1f);
+            default: return record.system == "D&D 5e" ? VTTLayout.C_TEXT_GOLD : new Color(0.85f, 0.25f, 0.25f, 1f);
+        }
+    }
+    private void BuildMiniUI()
+    {
+        Canvas cv = FindAnyObjectByType<Canvas>();
+        _panel = VTTLayout.New("TokenMiniUI", cv.transform);
+        RectTransform rt = _panel.AddComponent<RectTransform>();
+
+        rt.anchorMin = new Vector2(1, 0); rt.anchorMax = new Vector2(1, 0);
+        rt.pivot = new Vector2(1, 0);
+        rt.anchoredPosition = new Vector2(-20f, 20f);
+        Image bg = _panel.AddComponent<Image>(); bg.color = VTTLayout.C_HDR_BG;
+        VTTLayout.AccentBar(rt, 4f, VTTLayout.C_ACCENT);
+
+        Button btnClose = VTTLayout.BtnFixed(rt, 240f, -5f, 30f, 30f, "X", VTTLayout.C_BTN_CLOSE, VTTLayout.C_BDR_CLOSE, Color.white, 12f, true);
+        btnClose.onClick.AddListener(ClosePanel);
+
+        nameLbl = VTTLayout.LabelFixed(rt, 15f, -10f, 220f, 20f, 14f, VTTLayout.C_TEXT_PANEL, FontStyles.Bold, TextAlignmentOptions.MidlineLeft);
+
+        contentRT = VTTLayout.New("Content", rt).AddComponent<RectTransform>();
+        contentRT.anchorMin = Vector2.zero; contentRT.anchorMax = Vector2.one;
+        contentRT.offsetMin = new Vector2(15f, 15f); contentRT.offsetMax = new Vector2(-15f, -40f);
+
+        _panel.SetActive(false);
+    }
+
+    public void OpenMiniUI(TokenController token)
+    {
+        activeToken = token;
+        var record = CharacterManager.Instance.GetCharacter(token.charId);
+        if (record == null) return;
+
+        nameLbl.text = record.name;
+        foreach (Transform child in contentRT) Destroy(child.gameObject);
+
+        float y = 0f;
+        if (record.system == "D&D 5e")
+        {
+            BuildStatRow("HP", "dnd_hp_curr", "dnd_hp_max", record, VTTLayout.C_TEXT_GOLD, ref y);
+        }
+        else
+        {
+            BuildStatRow("PV", "ord_pv_curr", "ord_pv_max", record, new Color(0.85f, 0.2f, 0.3f), ref y);
+            BuildStatRow("PE", "ord_pe_curr", "ord_pe_max", record, new Color(0.2f, 0.5f, 0.85f), ref y);
+            BuildStatRow("SAN", "ord_san_curr", "ord_san_max", record, new Color(0.6f, 0.2f, 0.85f), ref y);
+        }
+
+        Button btnSheet = VTTLayout.BtnFull(contentRT, y, 30f, 0f, "ABRIR FICHA DA SESSAO", VTTLayout.C_BTN_PRI, VTTLayout.C_BDR_ACC, Color.white, 10.5f);
+        string sheetCharId = record.id;
+        btnSheet.onClick.AddListener(() => {
+            if (CharacterCreatorScreen.Instance != null && CharacterManager.Instance != null)
+            {
+                CharacterRecord target = CharacterManager.Instance.GetCharacter(sheetCharId);
+                if (target != null) CharacterCreatorScreen.Instance.OpenForSession(target);
+            }
+        });
+        y -= 40f;
+        y -= 5f;
+        VTTLayout.Box("Div", contentRT, 0, y, 250f, 1f, VTTLayout.C_BDR_DEFAULT);
+        y -= 15f;
+
+        VTTLayout.LabelFixed(contentRT, 0, y, 150f, 20f, 11f, VTTLayout.C_TEXT_DIM, FontStyles.Bold, TextAlignmentOptions.MidlineLeft).text = "TAMANHO DO TOKEN";
+        TMP_Text scaleTxt = VTTLayout.LabelFixed(contentRT, 150f, y, 100f, 20f, 11f, VTTLayout.C_ACCENT, FontStyles.Bold, TextAlignmentOptions.MidlineRight);
+        scaleTxt.text = activeToken.transform.localScale.x.ToString("F2") + "x";
+        y -= 25f;
+
+        float currentScale = activeToken.transform.localScale.x;
+        float startT = currentScale <= 0.31f
+            ? Mathf.InverseLerp(0.01f, 0.31f, currentScale) * 0.5f
+            : 0.5f + Mathf.InverseLerp(0.31f, 20.0f, currentScale) * 0.5f;
+
+        Slider scaleSlider = VTTLayout.MakeSlider(contentRT, y, 24f, 0f, 1f, startT);
+        scaleSlider.onValueChanged.AddListener((val) => {
+            if (activeToken != null)
+            {
+                float s = val <= 0.5f
+                    ? Mathf.Lerp(0.01f, 0.31f, val * 2f)
+                    : Mathf.Lerp(0.31f, 20.0f, (val - 0.5f) * 2f);
+
+                activeToken.transform.localScale = new Vector3(s, s, 1f);
+                scaleTxt.text = s.ToString("F2") + "x";
+                activeToken.RevealFogIfEnabled();
+            }
+        });
+        y -= 35f;
+
+        VTTLayout.LabelFixed(contentRT, 0, y, 250f, 20f, 11f, VTTLayout.C_TEXT_DIM, FontStyles.Bold, TextAlignmentOptions.MidlineLeft).text = "COR DA BORDA";
+        y -= 25f;
+        Color[] palette = { Color.white, new Color(0.85f, 0.2f, 0.2f), new Color(0.2f, 0.5f, 0.9f), new Color(0.2f, 0.8f, 0.3f), new Color(0.92f, 0.78f, 0.28f), Color.black };
+        float bx = 0;
+        foreach (Color c in palette)
+        {
+            Button cb = VTTLayout.BtnFixed(contentRT, bx, y, 32f, 32f, "", c, Color.white, c, 10f);
+            cb.onClick.AddListener(() => { if (activeToken != null) activeToken.SetBorderColor(c); });
+            bx += 38f;
+        }
+        y -= 45f;
+
+        y -= 5f;
+        VTTLayout.Box("Div2", contentRT, 0, y, 250f, 1f, VTTLayout.C_BDR_DEFAULT);
+        y -= 15f;
+
+        VTTLayout.LabelFixed(contentRT, 0, y, 150f, 20f, 11f, VTTLayout.C_TEXT_DIM, FontStyles.Bold, TextAlignmentOptions.MidlineLeft).text = "RAIO DE VISAO";
+        TMP_Text radTxt = VTTLayout.LabelFixed(contentRT, 150f, y, 100f, 20f, 11f, VTTLayout.C_ACCENT, FontStyles.Bold, TextAlignmentOptions.MidlineRight);
+        radTxt.text = activeToken.visionRadius.ToString("F1");
+        y -= 25f;
+
+        Slider radSlider = VTTLayout.MakeSlider(contentRT, y, 24f, 1f, 20f, activeToken.visionRadius);
+        radSlider.onValueChanged.AddListener((val) => {
+            if (activeToken != null)
+            {
+                activeToken.visionRadius = val;
+                radTxt.text = val.ToString("F1");
+                activeToken.RevealFogIfEnabled();
+            }
+        });
+        y -= 35f;
+
+        string initialShapeName = activeToken.visionShape == VisionShape.Circle ? "CIRCULO" : (activeToken.visionShape == VisionShape.Square ? "QUADRADO" : "CONE");
+
+        Button btnShape = VTTLayout.BtnFull(contentRT, y, 30f, 0f, "FORMATO: " + initialShapeName, VTTLayout.C_BTN_SEC, VTTLayout.C_BDR_DEFAULT, Color.white, 11f);
+
+        btnShape.onClick.AddListener(() => {
+            if (activeToken != null)
+            {
+                if (activeToken.visionShape == VisionShape.Circle)
+                    activeToken.visionShape = VisionShape.Square;
+                else if (activeToken.visionShape == VisionShape.Square)
+                    activeToken.visionShape = VisionShape.Cone;
+                else
+                    activeToken.visionShape = VisionShape.Circle;
+
+                string newShapeName = activeToken.visionShape == VisionShape.Circle ? "CIRCULO" : (activeToken.visionShape == VisionShape.Square ? "QUADRADO" : "CONE");
+
+                btnShape.GetComponentInChildren<TMP_Text>().text = "FORMATO: " + newShapeName;
+                activeToken.RevealFogIfEnabled();
+            }
+        });
+        y -= 40f;
+
+        Color fogColor = activeToken.revealsFog ? VTTLayout.C_BTN_ACTIVE : VTTLayout.C_BTN_SEC;
+        string fogText = activeToken.revealsFog ? "EMITE VISAO: LIGADO" : "FANTASMA (ESCONDIDO)";
+        Button btnFog = VTTLayout.BtnFull(contentRT, y, 30f, 0f, fogText, fogColor, VTTLayout.C_BDR_DEFAULT, Color.white, 11f);
+        btnFog.onClick.AddListener(() => {
+            if (activeToken != null)
+            {
+                activeToken.revealsFog = !activeToken.revealsFog;
+                OpenMiniUI(activeToken);
+                activeToken.RevealFogIfEnabled();
+            }
+        });
+        y -= 40f;
+
+        string projectionText = activeToken.renderInProjection ? "PROJECAO: VISIVEL" : "PROJECAO: OCULTO";
+        Color projectionColor = activeToken.renderInProjection ? VTTLayout.C_BTN_ACTIVE : VTTLayout.C_BTN_SEC;
+        Button btnProjection = VTTLayout.BtnFull(contentRT, y, 30f, 0f, projectionText, projectionColor, VTTLayout.C_BDR_DEFAULT, Color.white, 11f);
+        btnProjection.onClick.AddListener(() => {
+            if (activeToken != null)
+            {
+                activeToken.SetRenderInProjection(!activeToken.renderInProjection);
+                OpenMiniUI(activeToken);
+            }
+        });
+        y -= 40f;
+        Button btnDel = VTTLayout.BtnFull(contentRT, y, 34f, 0f, "REMOVER DO MAPA", VTTLayout.C_BTN_CLOSE, VTTLayout.C_BDR_CLOSE, Color.white, 12f);
+        btnDel.onClick.AddListener(() => {
+            if (activeToken != null) UIConfirmDialog.Show("Remover token", "Remove este token do mapa atual, sem apagar a ficha do personagem.", () => {
+                if (activeToken != null) Destroy(activeToken.gameObject);
+                ClosePanel();
+            });
+        });
+        y -= 44f;
+
+        _panel.GetComponent<RectTransform>().sizeDelta = new Vector2(280f, Mathf.Abs(y) + 60f);
+        FitMiniUIToScreen();
+        _panel.SetActive(true);
+        _panel.transform.SetAsLastSibling();
+    }
+
+
+    private void FitMiniUIToScreen()
+    {
+        if (_panel == null) return;
+        RectTransform rt = _panel.GetComponent<RectTransform>();
+        if (rt == null) return;
+
+        float maxH = Mathf.Max(260f, Screen.height - 48f);
+        float scale = Mathf.Min(1f, maxH / Mathf.Max(1f, rt.sizeDelta.y));
+        rt.localScale = Vector3.one * Mathf.Clamp(scale, 0.72f, 1f);
+        rt.anchoredPosition = new Vector2(-20f, 20f);
+    }
+    private void BuildStatRow(string label, string currKey, string maxKey, CharacterRecord record, Color color, ref float y)
+    {
+        VTTLayout.LabelFixed(contentRT, 0, y, 60f, 30f, 12f, color, FontStyles.Bold, TextAlignmentOptions.MidlineLeft).text = label;
+        string cVal = record.fields.Find(f => f.key == currKey)?.value ?? "0";
+        string mVal = record.fields.Find(f => f.key == maxKey)?.value ?? "0";
+
+        TMP_InputField cIn = VTTLayout.InputFieldFixed(contentRT, 65f, y, 60f, 30f, 14f, VTTLayout.C_TEXT_PANEL, FontStyles.Bold, cVal);
+        cIn.textComponent.alignment = TextAlignmentOptions.Center;
+
+        VTTLayout.LabelFixed(contentRT, 130f, y, 15f, 30f, 14f, VTTLayout.C_TEXT_DIM, FontStyles.Bold).text = "/";
+
+        TMP_InputField mIn = VTTLayout.InputFieldFixed(contentRT, 150f, y, 60f, 30f, 14f, VTTLayout.C_TEXT_DIM, FontStyles.Bold, mVal);
+        mIn.textComponent.alignment = TextAlignmentOptions.Center;
+
+        cIn.onEndEdit.AddListener((val) => CharacterManager.Instance.UpdateCharacterField(activeToken.charId, currKey, val));
+        mIn.onEndEdit.AddListener((val) => CharacterManager.Instance.UpdateCharacterField(activeToken.charId, maxKey, val));
+
+        y -= 40f;
+    }
+
+    public void ClosePanel() => _panel.SetActive(false);
+}
