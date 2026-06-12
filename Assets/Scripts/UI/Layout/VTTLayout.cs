@@ -53,10 +53,23 @@ public static class VTTLayout
     public static readonly Color C_TEXT_GOLD = RGB(0.92f, 0.78f, 0.28f);
 
     public static Color RGB(float r, float g, float b, float a = 1f) => new Color(r, g, b, a);
-    public static Color Highlight(Color c) => Color.Lerp(c, Color.white, 0.15f);
-    public static Color Pressed(Color c) => Color.Lerp(c, Color.black, 0.35f);
-    public static Color Selected(Color c) => Color.Lerp(c, Color.white, 0.05f);
+    public static Color Highlight(Color c) => Color.Lerp(c, Color.white, 0.10f);
+    public static Color Pressed(Color c) => Color.Lerp(c, Color.black, 0.12f);
+    public static Color Selected(Color c) => Color.Lerp(c, Color.white, 0.08f);
     public static Color Disabled(Color c) => new Color(c.r * 0.5f, c.g * 0.5f, c.b * 0.5f, 0.6f);
+
+    public static ColorBlock ButtonColors(Color bg)
+    {
+        ColorBlock cb = ColorBlock.defaultColorBlock;
+        cb.normalColor = bg;
+        cb.highlightedColor = Highlight(bg);
+        cb.pressedColor = Pressed(bg);
+        cb.selectedColor = Selected(bg);
+        cb.disabledColor = Disabled(bg);
+        cb.fadeDuration = 0.12f;
+        cb.colorMultiplier = 1f;
+        return cb;
+    }
 
     public static Canvas GetOverlayCanvas(string name = "VTT_OverlayCanvas", int sortingOrder = 10000)
     {
@@ -216,7 +229,7 @@ public static class VTTLayout
         Image img = go.AddComponent<Image>(); img.color = bg; img.raycastTarget = true;
 
         Button btn = go.AddComponent<Button>(); btn.targetGraphic = img; btn.transition = Selectable.Transition.ColorTint;
-        ColorBlock cb = ColorBlock.defaultColorBlock; cb.normalColor = bg; cb.highlightedColor = Highlight(bg); cb.pressedColor = Pressed(bg); cb.selectedColor = Selected(bg); cb.disabledColor = Disabled(bg); cb.fadeDuration = 0.08f; cb.colorMultiplier = 1f; btn.colors = cb;
+        btn.colors = ButtonColors(bg);
 
         go.AddComponent<ButtonFeedback>();
 
@@ -235,8 +248,29 @@ public static class VTTLayout
     public static void SetBtnColor(Button btn, Color color)
     {
         if (btn == null) return;
-        Image img = btn.GetComponent<Image>(); if (img != null) img.color = color;
-        ColorBlock cb = btn.colors; cb.normalColor = color; cb.highlightedColor = Highlight(color); cb.pressedColor = Pressed(color); btn.colors = cb;
+        ColorBlock current = btn.colors;
+        Image img = btn.GetComponent<Image>();
+        if (ColorsClose(current.normalColor, color) && ColorsClose(current.selectedColor, Selected(color)))
+        {
+            if (img != null && !ColorsClose(img.color, color)) img.color = color;
+            return;
+        }
+
+        if (img != null && !ColorsClose(img.color, color)) img.color = color;
+        btn.colors = ButtonColors(color);
+    }
+
+    public static void SetButtonActive(Button btn, bool active, Color inactiveColor, Color activeColor)
+    {
+        SetBtnColor(btn, active ? activeColor : inactiveColor);
+    }
+
+    private static bool ColorsClose(Color a, Color b)
+    {
+        return Mathf.Abs(a.r - b.r) < 0.002f
+            && Mathf.Abs(a.g - b.g) < 0.002f
+            && Mathf.Abs(a.b - b.b) < 0.002f
+            && Mathf.Abs(a.a - b.a) < 0.002f;
     }
 
     public static Slider MakeSlider(RectTransform parent, float y, float height, float min, float max, float val)

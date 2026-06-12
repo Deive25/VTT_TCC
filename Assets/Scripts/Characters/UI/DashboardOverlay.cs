@@ -214,12 +214,8 @@ public class DashboardOverlay : MonoBehaviour
         Button btn = card.AddComponent<Button>();
         btn.targetGraphic = bg;
 
-        ColorBlock cb = ColorBlock.defaultColorBlock;
-        cb.normalColor = bg.color;
-        cb.highlightedColor = VTTLayout.Highlight(bg.color);
-        cb.pressedColor = VTTLayout.Pressed(bg.color);
-        cb.selectedColor = bg.color;
-        btn.colors = cb;
+        btn.transition = Selectable.Transition.ColorTint;
+        btn.colors = VTTLayout.ButtonColors(bg.color);
         card.AddComponent<ButtonFeedback>();
 
         btn.onClick.AddListener(() => {
@@ -268,10 +264,8 @@ public class DashboardOverlay : MonoBehaviour
         Button btn = go.AddComponent<Button>();
         btn.targetGraphic = img;
 
-        ColorBlock cb = ColorBlock.defaultColorBlock;
-        cb.normalColor = bg; cb.highlightedColor = VTTLayout.Highlight(bg);
-        cb.pressedColor = VTTLayout.Pressed(bg); cb.selectedColor = bg;
-        btn.colors = cb;
+        btn.transition = Selectable.Transition.ColorTint;
+        btn.colors = VTTLayout.ButtonColors(bg);
         go.AddComponent<ButtonFeedback>();
 
         TMP_Text t = MakeText(rt, label, fontSize, textColor, bold ? FontStyles.Bold : FontStyles.Normal, TextAlignmentOptions.Center);

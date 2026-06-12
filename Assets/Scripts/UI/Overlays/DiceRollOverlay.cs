@@ -610,15 +610,7 @@ public class DiceRollOverlay : MonoBehaviour
         Button btn = btnGO.AddComponent<Button>();
         btn.targetGraphic = img;
         btn.transition = Selectable.Transition.ColorTint;
-        ColorBlock cb = ColorBlock.defaultColorBlock;
-        cb.normalColor = bg;
-        cb.highlightedColor = Color.Lerp(bg, Color.white, 0.30f);
-        cb.pressedColor = Color.Lerp(bg, Color.black, 0.35f);
-        cb.selectedColor = Color.Lerp(bg, Color.white, 0.15f);
-        cb.disabledColor = new Color(bg.r * 0.45f, bg.g * 0.45f, bg.b * 0.45f, 0.5f);
-        cb.fadeDuration = 0.06f;
-        cb.colorMultiplier = 1f;
-        btn.colors = cb;
+        btn.colors = VTTLayout.ButtonColors(bg);
 
         GameObject lGO = MakeGO("Lbl", btnGO.transform);
         RectTransform lRT = lGO.AddComponent<RectTransform>();
@@ -669,15 +661,7 @@ public class DiceRollOverlay : MonoBehaviour
         Button btn = btnGO.AddComponent<Button>();
         btn.targetGraphic = img;
         btn.transition = Selectable.Transition.ColorTint;
-        ColorBlock cb = ColorBlock.defaultColorBlock;
-        cb.normalColor = bg;
-        cb.highlightedColor = Color.Lerp(bg, Color.white, 0.30f);
-        cb.pressedColor = Color.Lerp(bg, Color.black, 0.35f);
-        cb.selectedColor = Color.Lerp(bg, Color.white, 0.15f);
-        cb.disabledColor = new Color(bg.r * 0.45f, bg.g * 0.45f, bg.b * 0.45f, 0.5f);
-        cb.fadeDuration = 0.06f;
-        cb.colorMultiplier = 1f;
-        btn.colors = cb;
+        btn.colors = VTTLayout.ButtonColors(bg);
 
         GameObject lGO = MakeGO("Lbl", btnGO.transform);
         RectTransform lRT = lGO.AddComponent<RectTransform>();

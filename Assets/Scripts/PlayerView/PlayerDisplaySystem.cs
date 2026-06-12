@@ -41,6 +41,9 @@ public class PlayerDisplaySystem : MonoBehaviour
     private bool isMaximized = false;
     private Vector2 savedSize = new Vector2(960f, 580f);
     private Vector2 savedPos = Vector2.zero;
+    private const float MIN_FLOATING_W = 520f;
+    private const float MIN_FLOATING_H = 340f;
+    private const float MIN_VISIBLE_MARGIN = 56f;
 
     public int targetDisplayIndex = 1;
 
@@ -355,7 +358,7 @@ public class PlayerDisplaySystem : MonoBehaviour
             if (RectTransformUtility.ScreenPointToLocalPointInRectangle(windowRT.parent as RectTransform, ped.position, ped.pressEventCamera, out Vector2 localMousePos))
             {
                 windowRT.localPosition = localMousePos - dragOffset;
-                FitFloatingWindowToCanvas();
+                KeepFloatingWindowRecoverable();
             }
         });
         trigger.triggers.Add(entryDrag);
@@ -424,11 +427,11 @@ public class PlayerDisplaySystem : MonoBehaviour
             if (isMaximized || isMinimized) return;
             PointerEventData ped = (PointerEventData)data;
             Vector2 delta = ped.position - resizeStartMouse;
-            float newW = Mathf.Clamp(resizeStartSize.x + delta.x, 520f, 1600f);
-            float newH = Mathf.Clamp(resizeStartSize.y - delta.y, 340f, 1000f);
+            float newW = Mathf.Clamp(resizeStartSize.x + delta.x, MIN_FLOATING_W, 2200f);
+            float newH = Mathf.Clamp(resizeStartSize.y - delta.y, MIN_FLOATING_H, 1400f);
             windowRT.sizeDelta = new Vector2(newW, newH);
             savedSize = windowRT.sizeDelta;
-            FitFloatingWindowToCanvas();
+            KeepFloatingWindowRecoverable();
         });
         trigger.triggers.Add(drag);
     }
@@ -503,7 +506,7 @@ public class PlayerDisplaySystem : MonoBehaviour
     }
 
 
-    private void FitFloatingWindowToCanvas()
+    private void KeepFloatingWindowRecoverable()
     {
         if (floatingWindow == null || windowRT == null) return;
         Canvas canvas = floatingWindow.GetComponentInParent<Canvas>();
@@ -511,16 +514,14 @@ public class PlayerDisplaySystem : MonoBehaviour
 
         RectTransform canvasRT = canvas.GetComponent<RectTransform>();
         Vector2 canvasSize = canvasRT.rect.size;
-        float maxW = Mathf.Max(520f, canvasSize.x - 48f);
-        float maxH = Mathf.Max(340f, canvasSize.y - 48f);
-        windowRT.sizeDelta = new Vector2(Mathf.Clamp(windowRT.sizeDelta.x, 520f, maxW), Mathf.Clamp(windowRT.sizeDelta.y, 340f, maxH));
+        windowRT.sizeDelta = new Vector2(Mathf.Max(windowRT.sizeDelta.x, MIN_FLOATING_W), Mathf.Max(windowRT.sizeDelta.y, MIN_FLOATING_H));
 
         float halfW = windowRT.sizeDelta.x * 0.5f;
         float halfH = windowRT.sizeDelta.y * 0.5f;
-        float minX = -canvasSize.x * 0.5f + halfW + 12f;
-        float maxX = canvasSize.x * 0.5f - halfW - 12f;
-        float minY = -canvasSize.y * 0.5f + halfH + 12f;
-        float maxY = canvasSize.y * 0.5f - halfH - 12f;
+        float minX = -canvasSize.x * 0.5f - halfW + MIN_VISIBLE_MARGIN;
+        float maxX = canvasSize.x * 0.5f + halfW - MIN_VISIBLE_MARGIN;
+        float minY = -canvasSize.y * 0.5f - halfH + MIN_VISIBLE_MARGIN;
+        float maxY = canvasSize.y * 0.5f + halfH - MIN_VISIBLE_MARGIN;
 
         if (maxX >= minX && maxY >= minY)
             windowRT.anchoredPosition = new Vector2(Mathf.Clamp(windowRT.anchoredPosition.x, minX, maxX), Mathf.Clamp(windowRT.anchoredPosition.y, minY, maxY));
@@ -529,16 +530,39 @@ public class PlayerDisplaySystem : MonoBehaviour
     }
     public void OpenWindow()
     {
+        if (TryOpenOnTargetDisplay()) return;
+        OpenFloatingWindowInsideMainCanvas();
+    }
+
+    private void OpenFloatingWindowInsideMainCanvas()
+    {
         playerCam.targetDisplay = 0;
         playerCam.targetTexture = playerViewTex;
         RestoreMainWindowMode();
         floatingWindow.SetActive(true);
-        FitFloatingWindowToCanvas();
+        KeepFloatingWindowRecoverable();
         floatingWindow.transform.SetAsLastSibling();
 
         if (!isLinkedToGM || currentMode == VTTMode.Physical_Table) FocusFullMap();
     }
 
+    private bool TryOpenOnTargetDisplay()
+    {
+        if (Display.displays.Length <= 1 || targetDisplayIndex >= Display.displays.Length)
+            return false;
+
+        RestoreMainWindowMode();
+        Display.displays[targetDisplayIndex].Activate(1920, 1080, 60);
+
+        playerCam.targetTexture = null;
+        playerCam.targetDisplay = targetDisplayIndex;
+        CloseWindow();
+        Debug.Log("Janela dos jogadores destacada para o " + GetCurrentDisplayName());
+
+        StartCoroutine(EnforceScreenModeRoutine());
+        if (!isLinkedToGM || currentMode == VTTMode.Physical_Table) FocusFullMap();
+        return true;
+    }
     public void CloseWindow() => floatingWindow.SetActive(false);
 
     public string GetCurrentDisplayName()
@@ -556,24 +580,9 @@ public class PlayerDisplaySystem : MonoBehaviour
 
     public void SendToMonitor()
     {
-        if (Display.displays.Length > 1 && targetDisplayIndex < Display.displays.Length)
-        {
-            RestoreMainWindowMode();
-            Display.displays[targetDisplayIndex].Activate(1920, 1080, 60);
-
-            playerCam.targetTexture = null;
-            playerCam.targetDisplay = targetDisplayIndex;
-            CloseWindow();
-            Debug.Log("Sinal enviado para o " + GetCurrentDisplayName());
-
-            StartCoroutine(EnforceScreenModeRoutine());
-        }
-        else
-        {
+        if (!TryOpenOnTargetDisplay())
             Debug.LogWarning("[PlayerDisplaySystem] Monitor selecionado nao esta conectado no Windows.");
-        }
     }
-
     private IEnumerator EnforceScreenModeRoutine()
     {
         yield return new WaitForSeconds(0.2f);

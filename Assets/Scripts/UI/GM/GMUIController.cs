@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using TMPro;
@@ -24,6 +24,8 @@ public class GMUIController : MonoBehaviour
 
     private RectTransform layersContainer;
     private RectTransform tokensContainer;
+    private ScrollRect layersScroll;
+    private ScrollRect tokensScroll;
 
     private float _lastCamZoom = -1f;
 
@@ -154,8 +156,8 @@ public class GMUIController : MonoBehaviour
         });
         y -= BH + GAP;
 
-        ScrollRect boardScroll = VTTLayout.MakeScrollView("BoardsScroll", p, 0, y, W_LEFT, 150f, out layersContainer);
-        boardScroll.movementType = ScrollRect.MovementType.Clamped;
+        layersScroll = VTTLayout.MakeScrollView("BoardsScroll", p, 0, y, W_LEFT, 150f, out layersContainer);
+        layersScroll.movementType = ScrollRect.MovementType.Clamped;
         y -= 150f + SGAP;
 
         y = DrawSecHeader(p, y, "TOKENS DA CAMPANHA");
@@ -183,19 +185,19 @@ public class GMUIController : MonoBehaviour
         });
         y -= BH + SGAP;
 
-        ScrollRect tokScroll = VTTLayout.MakeScrollView("TokensScroll", p, 0, 0, 0, 0, out tokensContainer);
-        RectTransform tokScrollRT = tokScroll.GetComponent<RectTransform>();
+        tokensScroll = VTTLayout.MakeScrollView("TokensScroll", p, 0, 0, 0, 0, out tokensContainer);
+        RectTransform tokScrollRT = tokensScroll.GetComponent<RectTransform>();
         tokScrollRT.anchorMin = new Vector2(0, 0);
         tokScrollRT.anchorMax = new Vector2(1, 1);
         tokScrollRT.pivot = new Vector2(0, 1);
         tokScrollRT.offsetMax = new Vector2(0, y);
         tokScrollRT.offsetMin = new Vector2(0, PAD);
-        tokScroll.movementType = ScrollRect.MovementType.Clamped;
+        tokensScroll.movementType = ScrollRect.MovementType.Clamped;
     }
 
     private float DrawPlayerScreenSection(RectTransform p, float y)
     {
-        VTTLayout.BtnFull(p, y, BH, -PAD * 2f, "ABRIR JANELA FLUTUANTE", VTTLayout.C_BTN_PRI, VTTLayout.C_BDR_ACC, VTTLayout.C_TEXT, 11f).onClick.AddListener(() => {
+        VTTLayout.BtnFull(p, y, BH, -PAD * 2f, "ABRIR JANELA DESTACAVEL", VTTLayout.C_BTN_PRI, VTTLayout.C_BDR_ACC, VTTLayout.C_TEXT, 11f).onClick.AddListener(() => {
             if (PlayerDisplaySystem.Instance != null) PlayerDisplaySystem.Instance.OpenWindow();
         });
         y -= BH + GAP;
@@ -271,6 +273,7 @@ public class GMUIController : MonoBehaviour
     private void RefreshTokensList()
     {
         if (tokensContainer == null || CharacterManager.Instance == null) return;
+        float scrollPos = GetScrollPosition(tokensScroll);
         foreach (Transform child in tokensContainer) Destroy(child.gameObject);
 
         float ly = -PAD;
@@ -281,7 +284,8 @@ public class GMUIController : MonoBehaviour
             TMP_Text emptyTxt = VTTLayout.LabelFixed(tokensContainer, PAD, ly, W_LEFT - (PAD * 2), 40f, VTTLayout.F_SMALL, VTTLayout.C_TEXT_DIM);
             emptyTxt.text = "Crie um personagem no Dashboard.";
             emptyTxt.alignment = TextAlignmentOptions.Center;
-            tokensContainer.sizeDelta = new Vector2(0f, 60f);
+            SetScrollableContentHeight(tokensContainer, 60f, tokensScroll);
+            RestoreScrollPosition(tokensScroll, scrollPos);
             return;
         }
 
@@ -332,17 +336,27 @@ public class GMUIController : MonoBehaviour
 
             ly -= (itemH + 6f);
         }
-        tokensContainer.sizeDelta = new Vector2(0f, Mathf.Abs(ly) + PAD);
+        SetScrollableContentHeight(tokensContainer, Mathf.Abs(ly) + PAD, tokensScroll);
+        RestoreScrollPosition(tokensScroll, scrollPos);
     }
 
     private void RefreshLayersList()
     {
         if (layersContainer == null || LayerManager.Instance == null) return;
+        float scrollPos = GetScrollPosition(layersScroll);
         foreach (Transform child in layersContainer) Destroy(child.gameObject);
 
         float ly = 0f;
         var layers = LayerManager.Instance.Layers;
-        if (layers.Count == 0) return;
+        if (layers.Count == 0)
+        {
+            TMP_Text emptyTxt = VTTLayout.LabelFixed(layersContainer, PAD, -PAD, W_LEFT - (PAD * 2), 36f, VTTLayout.F_SMALL, VTTLayout.C_TEXT_DIM);
+            emptyTxt.text = "Nenhum tabuleiro carregado.";
+            emptyTxt.alignment = TextAlignmentOptions.Center;
+            SetScrollableContentHeight(layersContainer, 54f, layersScroll);
+            RestoreScrollPosition(layersScroll, scrollPos);
+            return;
+        }
 
         foreach (var layer in layers)
         {
@@ -371,7 +385,8 @@ public class GMUIController : MonoBehaviour
 
             ly -= itemH + 6f;
         }
-        layersContainer.sizeDelta = new Vector2(0f, Mathf.Abs(ly));
+        SetScrollableContentHeight(layersContainer, Mathf.Abs(ly) + PAD, layersScroll);
+        RestoreScrollPosition(layersScroll, scrollPos);
     }
 
     private float DrawCameraSection(RectTransform p, float y)
@@ -555,9 +570,32 @@ public class GMUIController : MonoBehaviour
         return y - HH - 1f - GAP;
     }
 
+    private float GetScrollPosition(ScrollRect scroll)
+    {
+        return scroll != null ? scroll.verticalNormalizedPosition : 1f;
+    }
+
+    private void RestoreScrollPosition(ScrollRect scroll, float position)
+    {
+        if (scroll == null) return;
+        Canvas.ForceUpdateCanvases();
+        scroll.verticalNormalizedPosition = Mathf.Clamp01(position);
+    }
+
+    private void SetScrollableContentHeight(RectTransform content, float desiredHeight, ScrollRect scroll)
+    {
+        if (content == null) return;
+
+        float minHeight = 0f;
+        if (scroll != null && scroll.viewport != null && scroll.viewport.rect.height > 0f)
+            minHeight = scroll.viewport.rect.height;
+
+        content.sizeDelta = new Vector2(0f, Mathf.Max(desiredHeight, minHeight));
+    }
+
     private void SyncZoom() { if (zoomSlider != null && cameraController != null) { float camZoom = cameraController.CurrentZoom; if (Mathf.Abs(camZoom - _lastCamZoom) > 0.001f) { zoomSlider.SetValueWithoutNotify(camZoom); _lastCamZoom = camZoom; } } }
     private void SyncMouseCoord() { if (coordSystem != null && infoText != null && mapController != null && mapController.IsMapLoaded) OnMapInfo(new MapInfo { scale = mapController.CurrentScale, mouseNormalized = coordSystem.GetMouseNormalized(), isLoaded = true }); }
-    private void SyncFogState() { if (fogController == null || fogStatusText == null) return; bool active = fogController.IsActive; bool isPaint = fogController.CurrentMode == FogOfWarController.FogMode.Paint; if (!active) { fogStatusText.text = "Ferramenta inativa"; fogStatusText.color = VTTLayout.C_TEXT_DIM; } else if (isPaint) { fogStatusText.text = "Modo pintura ativo"; fogStatusText.color = VTTLayout.RGB(0.30f, 0.60f, 0.90f); } else { fogStatusText.text = "Modo apagar ativo"; fogStatusText.color = VTTLayout.RGB(0.85f, 0.40f, 0.35f); } VTTLayout.SetBtnColor(fogPaintBtn, (active && isPaint) ? VTTLayout.C_BTN_ACTIVE : VTTLayout.C_BTN_PAINT); VTTLayout.SetBtnColor(fogEraseBtn, (active && !isPaint) ? VTTLayout.C_BTN_ACTIVE : VTTLayout.C_BTN_ERASE); }
+    private void SyncFogState() { if (fogController == null || fogStatusText == null) return; bool active = fogController.IsActive; bool isPaint = fogController.CurrentMode == FogOfWarController.FogMode.Paint; if (!active) { fogStatusText.text = "Ferramenta inativa"; fogStatusText.color = VTTLayout.C_TEXT_DIM; } else if (isPaint) { fogStatusText.text = "Modo pintura ativo"; fogStatusText.color = VTTLayout.RGB(0.30f, 0.60f, 0.90f); } else { fogStatusText.text = "Modo apagar ativo"; fogStatusText.color = VTTLayout.RGB(0.85f, 0.40f, 0.35f); } VTTLayout.SetButtonActive(fogPaintBtn, active && isPaint, VTTLayout.C_BTN_PAINT, VTTLayout.C_BTN_ACTIVE); VTTLayout.SetButtonActive(fogEraseBtn, active && !isPaint, VTTLayout.C_BTN_ERASE, VTTLayout.C_BTN_ACTIVE); }
     private void OnMapInfo(MapInfo info) { if (infoText == null || !info.isLoaded) return; string cursor = info.mouseNormalized.HasValue ? info.mouseNormalized.Value.x.ToString("F3") + "  " + info.mouseNormalized.Value.y.ToString("F3") : "fora do mapa"; float zoom = (cameraController != null) ? cameraController.CurrentZoom : 0f; string fogSt = (fogController != null && fogController.IsActive) ? "Ativa" : "Inativa"; infoText.text = "Acesso    OK\nZoom      " + zoom.ToString("F2") + "\nCursor    " + cursor + "\nNevoa     " + fogSt; }
 
     private void RefreshHistory()

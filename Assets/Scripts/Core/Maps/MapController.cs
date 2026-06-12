@@ -44,7 +44,7 @@ public class MapController : MonoBehaviour
     {
         transform.position = Vector3.zero;
         CameraController cam = FindAnyObjectByType<CameraController>();
-        if (cam != null) cam.FocusOnActiveBoard(); // Camera assume todo o trabalho
+        if (cam != null) cam.FocusOnActiveBoard();
         NotifyMapInfoUpdated();
     }
 

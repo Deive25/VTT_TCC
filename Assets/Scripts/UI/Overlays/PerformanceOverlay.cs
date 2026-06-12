@@ -15,7 +15,6 @@ public class PerformanceOverlay : MonoBehaviour
     public float sampleIntervalSeconds = 0.5f;
     public string csvFileName = "vtt_metrics.csv";
 
-    // Dependencia opcional para diagnosticos do Kinect.
     private KinectManager _kinect;
 
     private float _accumTime;

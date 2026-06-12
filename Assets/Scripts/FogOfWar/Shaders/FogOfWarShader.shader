@@ -43,7 +43,6 @@ Shader "VTT/FogOfWar"
             float _Tiling;
             float _ExploredOpacity;
 
-            // Arrays: xyz = Pos X, Pos Y, Raio | w = Formato (0=Círculo, 1=Quadrado)
             uniform float4 _TokenPositions[64];
             uniform float4 _TokenDirections[64];
             uniform int _TokenCount;

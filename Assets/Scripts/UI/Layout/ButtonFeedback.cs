@@ -5,6 +5,8 @@ public class ButtonFeedback : MonoBehaviour, IPointerDownHandler, IPointerUpHand
 {
     private Vector3 originalScale;
     private RectTransform rectTransform;
+    private const float HoverScale = 1.01f;
+    private const float PressedScale = 0.98f;
 
     private void Awake()
     {
@@ -12,10 +14,10 @@ public class ButtonFeedback : MonoBehaviour, IPointerDownHandler, IPointerUpHand
         originalScale = rectTransform.localScale;
     }
 
-    public void OnPointerEnter(PointerEventData eventData) => rectTransform.localScale = originalScale * 1.02f;
+    public void OnPointerEnter(PointerEventData eventData) => rectTransform.localScale = originalScale * HoverScale;
     public void OnPointerExit(PointerEventData eventData) => rectTransform.localScale = originalScale;
-    public void OnPointerDown(PointerEventData eventData) => rectTransform.localScale = originalScale * 0.94f;
-    public void OnPointerUp(PointerEventData eventData) => rectTransform.localScale = originalScale * (eventData.pointerEnter == gameObject ? 1.02f : 1f);
+    public void OnPointerDown(PointerEventData eventData) => rectTransform.localScale = originalScale * PressedScale;
+    public void OnPointerUp(PointerEventData eventData) => rectTransform.localScale = originalScale * (eventData.pointerEnter == gameObject ? HoverScale : 1f);
 
     private void OnDisable()
     {
